@@ -1,0 +1,84 @@
+# ══════════════════════════════════════════════════════════════════════
+# Dockerfile.backend — Multi-stage production build
+# ══════════════════════════════════════════════════════════════════════
+#
+# Stages:
+#   base       — Python + system deps
+#   deps       — install Python packages (cached layer)
+#   production — minimal runtime image
+#
+# Key decisions:
+#   - Non-root user (uid 1001) in production
+#   - No dev tools in production image
+#   - uvloop + httptools for max async performance
+#   - Graceful shutdown: uvicorn handles SIGTERM
+# ══════════════════════════════════════════════════════════════════════
+
+# ── Stage 1: base ──────────────────────────────────────────────────────────────
+FROM python:3.11-slim AS base
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Stage 2: deps ──────────────────────────────────────────────────────────────
+FROM base AS deps
+
+WORKDIR /deps
+
+COPY requirements.txt .
+RUN pip install --prefix=/install -r requirements.txt
+
+# ── Stage 3: production ────────────────────────────────────────────────────────
+FROM python:3.11-slim AS production
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PATH="/install/bin:$PATH" \
+    PYTHONPATH="/install/lib/python3.11/site-packages"
+
+# Runtime system deps only
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy installed packages from deps stage
+COPY --from=deps /install /install
+
+# Non-root user
+RUN groupadd -r vlsi --gid 1001 && \
+    useradd -r -g vlsi --uid 1001 --no-create-home vlsi
+
+WORKDIR /app
+
+# Copy application code
+COPY --chown=vlsi:vlsi . .
+
+USER vlsi
+
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Graceful shutdown: uvicorn handles SIGTERM, waits for in-flight requests
+# --workers 1: single worker per container (scale via multiple containers)
+# --loop uvloop: fastest async event loop
+# --http httptools: fastest HTTP parser
+CMD ["uvicorn", "app.main:app", \
+     "--host", "0.0.0.0", \
+     "--port", "8000", \
+     "--workers", "1", \
+     "--loop", "uvloop", \
+     "--http", "httptools", \
+     "--timeout-graceful-shutdown", "30", \
+     "--access-log"]

@@ -1,0 +1,455 @@
+/**
+ * InterviewPage.tsx — Live interview screen.
+ *
+ * Layout: Full-screen. Left: transcript. Right: status panel.
+ * Audio states: silence → listening → thinking → speaking
+ * All WS event types match backend WSEventType enum (uppercase).
+ */
+import React, { useEffect, useRef, useState, useCallback } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
+import { useInterview } from '@/stores/interview'
+import { useAuth } from '@/stores/auth'
+import { integrityApi, sessionApi } from '@/lib/api'
+import ConnectionStatus from '@/components/interview/ConnectionStatus'
+import { ModeTag } from '@/components/ui'
+
+const DOMAIN_LABELS: Record<string, string> = {
+  ANALOG_LAYOUT:       'Analog Layout',
+  PHYSICAL_DESIGN:     'Physical Design',
+  DESIGN_VERIFICATION: 'Design Verification',
+}
+
+// ── Main ───────────────────────────────────────────────────────────────────────
+export default function InterviewPage() {
+  const { sessionId } = useParams<{ sessionId: string }>()
+  const navigate = useNavigate()
+  const { user } = useAuth()
+  const {
+    wsStatus, audioState, mode, turnNumber,
+    currentQuestion, transcript, isStreaming, turns,
+    connect, disconnect, bargeIn,
+  } = useInterview()
+
+  const transcriptRef = useRef<HTMLDivElement>(null)
+  const [domain, setDomain] = useState<string>('Interview')
+
+  // Fetch domain, then connect
+  useEffect(() => {
+    if (!sessionId) return
+    sessionApi.get(sessionId)
+      .then(res => {
+        const d = res.data?.domain || 'ANALOG_LAYOUT'
+        setDomain(DOMAIN_LABELS[d] || d)
+      })
+      .catch(() => {})
+    connect(sessionId)
+    return () => disconnect()
+  }, [sessionId])
+
+  // Auto-scroll
+  useEffect(() => {
+    if (transcriptRef.current) {
+      transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight
+    }
+  }, [currentQuestion, turns.length])
+
+  // Redirect after session end
+  useEffect(() => {
+    if (wsStatus === 'ended') {
+      setTimeout(() => navigate(`/report/${sessionId}`), 1600)
+    }
+  }, [wsStatus])
+
+  // Anti-cheat passive tracking
+  const sendIntegrityEvent = useCallback((type: string) => {
+    if (!sessionId) return
+    integrityApi.sendEvent({ session_id: sessionId, event_type: type, context: { ts: Date.now() } })
+  }, [sessionId])
+
+  useEffect(() => {
+    const onHide  = () => sendIntegrityEvent('tab_hidden')
+    const onBlur  = () => sendIntegrityEvent('window_blur')
+    const onPaste = () => sendIntegrityEvent('clipboard_paste')
+    document.addEventListener('visibilitychange', onHide)
+    window.addEventListener('blur', onBlur)
+    document.addEventListener('paste', onPaste)
+    return () => {
+      document.removeEventListener('visibilitychange', onHide)
+      window.removeEventListener('blur', onBlur)
+      document.removeEventListener('paste', onPaste)
+    }
+  }, [sendIntegrityEvent])
+
+  const isEnded      = wsStatus === 'ended'
+  const isConnecting = wsStatus === 'connecting' || wsStatus === 'reconnecting'
+  const isLive       = wsStatus === 'connected'
+
+  return (
+    <div style={{
+      minHeight: '100dvh', background: 'var(--bg-canvas)',
+      display: 'flex', flexDirection: 'column',
+    }}>
+      {/* ── Top bar ── */}
+      <header style={{
+        height: 52, flexShrink: 0,
+        background: 'var(--bg-0)', borderBottom: '1px solid var(--border-0)',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '0 24px',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          {/* Brand dot */}
+          <span style={{
+            width: 24, height: 24, borderRadius: 6, background: 'var(--accent)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+          }}>
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+              <path d="M2 5H8M5 2V8" stroke="white" strokeWidth="1.8" strokeLinecap="round"/>
+            </svg>
+          </span>
+
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-3)', letterSpacing: '0.06em' }}>
+            {domain.toUpperCase()}
+          </span>
+
+          {isLive && <ModeTag mode={mode} />}
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {turnNumber > 0 && (
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-4)', letterSpacing: '0.06em' }}>
+              TURN {turnNumber}
+            </span>
+          )}
+          <ConnectionStatus status={wsStatus} />
+          <button
+            onClick={() => { disconnect(); navigate('/dashboard') }}
+            style={{
+              background: 'none', border: '1px solid var(--border-2)',
+              color: 'var(--text-3)', borderRadius: 'var(--r-md)',
+              padding: '5px 12px', fontSize: 11, cursor: 'pointer',
+              fontFamily: 'var(--font-body)', letterSpacing: '0.02em',
+            }}
+          >
+            End session
+          </button>
+        </div>
+      </header>
+
+      {/* ── Reconnect banner ── */}
+      {wsStatus === 'reconnecting' && (
+        <div style={{
+          background: 'var(--yellow-bg)', borderBottom: '1px solid var(--yellow-border)',
+          padding: '8px 24px', fontSize: 12, color: 'var(--yellow)',
+          display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--yellow)', animation: 'pulse 1.2s infinite', flexShrink: 0 }} />
+          Connection lost — reconnecting automatically…
+        </div>
+      )}
+
+      {/* ── Session ended banner ── */}
+      {isEnded && (
+        <div style={{
+          background: 'var(--green-bg)', borderBottom: '1px solid var(--green-border)',
+          padding: '8px 24px', fontSize: 12, color: 'var(--green)',
+          display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          <span style={{ color: 'var(--green)' }}>✓</span>
+          Session complete — generating your report…
+        </div>
+      )}
+
+      {/* ── Body ── */}
+      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 320px', overflow: 'hidden' }}>
+
+        {/* Transcript pane */}
+        <div style={{
+          display: 'flex', flexDirection: 'column',
+          borderRight: '1px solid var(--border-0)', overflow: 'hidden',
+        }}>
+
+          {/* Connecting state */}
+          {isConnecting && (
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16 }}>
+              <div style={{
+                width: 48, height: 48, borderRadius: 14, background: 'var(--accent-8)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                <span style={{ width: 22, height: 22, border: '2px solid var(--accent-25)', borderTopColor: 'var(--accent)', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />
+              </div>
+              <p style={{ fontSize: 14, color: 'var(--text-2)' }}>Connecting to session…</p>
+              <p style={{ fontSize: 12, color: 'var(--text-4)', fontFamily: 'var(--font-mono)', letterSpacing: '0.04em' }}>{sessionId?.slice(0, 8)}</p>
+            </div>
+          )}
+
+          {/* Live transcript */}
+          {(isLive || isEnded) && (
+            <div ref={transcriptRef} style={{
+              flex: 1, overflowY: 'auto', padding: '28px 32px',
+              display: 'flex', flexDirection: 'column', gap: 20,
+            }}>
+
+              {/* Previous turns */}
+              {turns.map((turn, i) => (
+                <div key={turn.turnNumber} style={{ animation: 'slide-up 0.25s var(--ease-dec)' }}>
+                  {/* Interviewer */}
+                  <div style={{ marginBottom: 14 }}>
+                    <p style={{ fontSize: 10, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--accent-dim)', marginBottom: 7 }}>
+                      Interviewer · Turn {turn.turnNumber}
+                    </p>
+                    <p style={{ fontSize: 16, color: 'var(--text-0)', lineHeight: 1.75 }}>
+                      {turn.question}
+                    </p>
+                  </div>
+                  {/* Answer */}
+                  {turn.answer && (
+                    <div style={{
+                      background: 'var(--bg-1)', borderRadius: 'var(--r-lg)',
+                      padding: '14px 18px', borderLeft: '2px solid var(--border-2)',
+                    }}>
+                      <p style={{ fontSize: 10, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-4)', marginBottom: 6 }}>
+                        Your response
+                      </p>
+                      <p style={{ fontSize: 14, color: 'var(--text-2)', lineHeight: 1.7 }}>{turn.answer}</p>
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {/* Current streaming question */}
+              {(isStreaming || currentQuestion) && (
+                <div style={{ animation: 'slide-up 0.2s var(--ease-dec)' }}>
+                  <p style={{ fontSize: 10, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--accent-dim)', marginBottom: 7 }}>
+                    Interviewer
+                  </p>
+                  <p style={{ fontSize: 16, color: 'var(--text-0)', lineHeight: 1.75 }}>
+                    {currentQuestion}
+                    {isStreaming && (
+                      <span style={{
+                        display: 'inline-block', width: 2, height: '1.1em',
+                        background: 'var(--accent)', marginLeft: 2, verticalAlign: 'text-bottom',
+                        animation: 'cursor-blink 1s ease-in-out infinite',
+                      }} />
+                    )}
+                  </p>
+                </div>
+              )}
+
+              {/* STT feedback */}
+              {audioState === 'thinking' && transcript && (
+                <div style={{ animation: 'fade-in 0.15s' }}>
+                  <p style={{ fontSize: 10, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-4)', marginBottom: 6 }}>
+                    Transcribing
+                  </p>
+                  <p style={{ fontSize: 13, color: 'var(--text-3)', fontStyle: 'italic', lineHeight: 1.6 }}>
+                    "{transcript}"
+                  </p>
+                </div>
+              )}
+
+              {/* Empty state */}
+              {!turns.length && !currentQuestion && !isStreaming && audioState === 'silence' && (
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '40px 0' }}>
+                  <p style={{ fontSize: 14, color: 'var(--text-2)' }}>Session ready</p>
+                  <p style={{ fontSize: 12, color: 'var(--text-4)' }}>The interviewer will open with a question shortly.</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Audio controls bar ── */}
+          {isLive && (
+            <div style={{
+              height: 80, flexShrink: 0,
+              background: 'var(--bg-0)', borderTop: '1px solid var(--border-0)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16,
+              padding: '0 32px',
+            }}>
+              <MicButton audioState={audioState} />
+              {audioState === 'speaking' && (
+                <button
+                  onClick={bargeIn}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 7,
+                    background: 'var(--accent-8)', color: 'var(--accent-dim)',
+                    border: '1px solid var(--accent-25)', borderRadius: 'var(--r-full)',
+                    padding: '8px 18px', fontSize: 12, cursor: 'pointer',
+                    fontFamily: 'var(--font-body)', fontWeight: 500,
+                    animation: 'fade-in 0.2s',
+                  }}
+                >
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--accent)', animation: 'pulse 1s infinite' }} />
+                  Interrupt
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* ── Right status panel ── */}
+        <div style={{
+          background: 'var(--bg-0)', display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        }}>
+          {/* Status */}
+          <div style={{ padding: '24px 20px', borderBottom: '1px solid var(--border-0)' }}>
+            <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-4)', marginBottom: 16 }}>
+              Live status
+            </p>
+            <AudioStateDisplay state={audioState} />
+          </div>
+
+          {/* Mode info */}
+          {isLive && (
+            <div style={{ padding: '20px', borderBottom: '1px solid var(--border-0)' }}>
+              <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-4)', marginBottom: 12 }}>
+                Interview mode
+              </p>
+              <ModeTag mode={mode} />
+              <p style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 10, lineHeight: 1.6 }}>
+                {MODE_DESCRIPTIONS[mode]}
+              </p>
+            </div>
+          )}
+
+          {/* Turn history mini-list */}
+          {turns.length > 0 && (
+            <div style={{ padding: '20px', flex: 1, overflowY: 'auto' }}>
+              <p style={{ fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-4)', marginBottom: 14 }}>
+                Turns
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {turns.map(t => (
+                  <div key={t.turnNumber} style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '8px 12px', background: 'var(--bg-1)',
+                    borderRadius: 'var(--r-md)',
+                  }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-4)', width: 20 }}>
+                      {String(t.turnNumber).padStart(2,'0')}
+                    </span>
+                    <ModeTag mode={t.mode} />
+                    {t.avgScore != null && (
+                      <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-3)' }}>
+                        {Number(t.avgScore).toFixed(1)}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Mode descriptions ──────────────────────────────────────────────────────────
+const MODE_DESCRIPTIONS: Record<string, string> = {
+  PROBING:       'Establishing baseline. Broad, exploratory questions.',
+  DEEPENING:     'Strong performance detected. Pursuing depth and nuance.',
+  ESCALATING:    'Gaps identified. Moving to harder territory.',
+  PRESSURE:      'Testing under difficulty. High-stakes follow-ups.',
+  RECOVERING:    'Giving space to recover with structured guidance.',
+  TRANSITIONING: 'Moving to a new topic area.',
+}
+
+// ── Audio state display ────────────────────────────────────────────────────────
+function AudioStateDisplay({ state }: { state: string }) {
+  const configs: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
+    silence: {
+      label: 'Waiting',
+      icon: <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--text-4)', display: 'block' }} />,
+      color: 'var(--text-3)',
+    },
+    listening: {
+      label: 'Listening',
+      icon: <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--green)', display: 'block', animation: 'pulse-scale 1.2s ease-in-out infinite' }} />,
+      color: 'var(--green)',
+    },
+    thinking: {
+      label: 'Processing',
+      icon: <ThinkingDots />,
+      color: 'var(--accent-dim)',
+    },
+    speaking: {
+      label: 'Interviewer speaking',
+      icon: <Waveform />,
+      color: 'var(--accent-dim)',
+    },
+  }
+  const c = configs[state] || configs.silence
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      {c.icon}
+      <span style={{ fontSize: 13, color: c.color, fontWeight: 500 }}>{c.label}</span>
+    </div>
+  )
+}
+
+function Waveform() {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 2, height: 16 }}>
+      {[0.25, 0.6, 1, 0.75, 0.45, 0.9, 0.55].map((h, i) => (
+        <span key={i} style={{
+          width: 2, height: 16,
+          background: 'var(--accent)',
+          borderRadius: 1, transformOrigin: 'bottom',
+          animation: `waveform 0.8s ${i * 0.1}s ease-in-out infinite`,
+          transform: `scaleY(${h})`,
+        }} />
+      ))}
+    </div>
+  )
+}
+
+function ThinkingDots() {
+  return (
+    <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
+      {[0, 0.15, 0.3].map(delay => (
+        <span key={delay} style={{
+          width: 5, height: 5, borderRadius: '50%', background: 'var(--accent)',
+          animation: `pulse 1.2s ${delay}s ease-in-out infinite`,
+        }} />
+      ))}
+    </div>
+  )
+}
+
+// ── Mic button ─────────────────────────────────────────────────────────────────
+function MicButton({ audioState }: { audioState: string }) {
+  const isListening = audioState === 'listening'
+  return (
+    <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      {isListening && (
+        <>
+          <span style={{
+            position: 'absolute', width: 52, height: 52, borderRadius: '50%',
+            border: '1.5px solid var(--accent)',
+            animation: 'ring-out 1.4s ease-out infinite',
+          }} />
+          <span style={{
+            position: 'absolute', width: 52, height: 52, borderRadius: '50%',
+            border: '1.5px solid var(--accent)',
+            animation: 'ring-out 1.4s 0.5s ease-out infinite',
+          }} />
+        </>
+      )}
+      <div style={{
+        width: 44, height: 44, borderRadius: '50%',
+        background: isListening ? 'var(--accent)' : 'var(--bg-2)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        transition: 'background var(--dur-std)',
+        boxShadow: isListening ? '0 0 0 3px var(--accent-15)' : undefined,
+        zIndex: 1,
+      }}>
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <rect x="5.5" y="1" width="5" height="8" rx="2.5" fill={isListening ? '#fff' : 'var(--text-3)'} />
+          <path d="M2.5 8C2.5 11.038 4.962 13.5 8 13.5C11.038 13.5 13.5 11.038 13.5 8"
+            stroke={isListening ? '#fff' : 'var(--text-3)'} strokeWidth="1.5" strokeLinecap="round" fill="none" />
+          <path d="M8 13.5V15.5" stroke={isListening ? '#fff' : 'var(--text-3)'} strokeWidth="1.5" strokeLinecap="round" />
+        </svg>
+      </div>
+    </div>
+  )
+}
