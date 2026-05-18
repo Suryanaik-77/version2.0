@@ -45,7 +45,11 @@ async def lifespan(app: FastAPI):
     # ── Startup ──────────────────────────────────────────────────────────────
     log.info("startup.redis_init")
     await r.init_redis()
-    
+
+    log.info("startup.runtime_config")
+    from app.core.runtime_config import load_from_redis
+    await load_from_redis()
+
     log.info("startup.metrics_task")
     flush_task = asyncio.create_task(
         metrics._flush_metrics_loop(),

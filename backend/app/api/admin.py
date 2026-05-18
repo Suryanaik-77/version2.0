@@ -24,6 +24,7 @@ from app.db.models import (
 )
 from app.db.session import get_db
 from app.core import redis as r_core
+from app.core import runtime_config as rc
 
 log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -603,3 +604,131 @@ async def integrity_overview(
         }
         for r in records
     ]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LLM Configuration
+# ══════════════════════════════════════════════════════════════════════════════
+
+AVAILABLE_MODELS = [
+    {"id": "gpt-4o-mini", "name": "GPT-4o Mini", "tier": "fast", "cost": "$0.15/$0.60 per 1M"},
+    {"id": "us.anthropic.claude-haiku-4-5-20251001-v1:0", "name": "Claude Haiku 4.5", "tier": "fast", "cost": "$1.00/$5.00 per 1M"},
+    {"id": "us.anthropic.claude-sonnet-4-6", "name": "Claude Sonnet 4.6", "tier": "balanced", "cost": "$3.00/$15.00 per 1M"},
+    {"id": "us.anthropic.claude-sonnet-4-5-20250929-v1:0", "name": "Claude Sonnet 4.5", "tier": "balanced", "cost": "$3.00/$15.00 per 1M"},
+    {"id": "us.anthropic.claude-opus-4-6-v1", "name": "Claude Opus 4.6", "tier": "premium", "cost": "$15.00/$75.00 per 1M"},
+    {"id": "grok-4.3", "name": "Grok 4.3", "tier": "balanced", "cost": "$1.25/$2.50 per 1M"},
+    {"id": "grok-4-1-fast-non-reasoning", "name": "Grok 4.1 Fast", "tier": "fast", "cost": "$0.20/$0.50 per 1M"},
+    {"id": "us.meta.llama4-maverick-17b-instruct-v1:0", "name": "Llama 4 Maverick 17B", "tier": "fast", "cost": "$0.17/$0.17 per 1M"},
+    {"id": "us.amazon.nova-lite-v1:0", "name": "Amazon Nova Lite", "tier": "fast", "cost": "$0.06/$0.24 per 1M"},
+]
+
+
+@router.get("/llm-config")
+async def get_llm_config(_: AdminUser) -> dict:
+    return {
+        "qgen_model": rc.get("qgen_model"),
+        "eval_model": rc.get("eval_model"),
+        "available_models": AVAILABLE_MODELS,
+    }
+
+
+class LLMConfigUpdate(BaseModel):
+    qgen_model: str | None = None
+    eval_model: str | None = None
+
+
+@router.post("/llm-config")
+async def set_llm_config(body: LLMConfigUpdate, _: AdminUser) -> dict:
+    updates = {}
+    if body.qgen_model is not None:
+        updates["qgen_model"] = body.qgen_model
+    if body.eval_model is not None:
+        updates["eval_model"] = body.eval_model
+    if updates:
+        await rc.set_many(updates)
+        log.info("admin.llm_config_updated", **updates)
+    return {"status": "success", **rc.get_all()}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Voice Configuration
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/voice-config")
+async def get_voice_config(_: AdminUser) -> dict:
+    return {
+        "tts_enabled": rc.get("tts_enabled"),
+        "tts_provider": rc.get("tts_provider"),
+        "tts_voice": rc.get("tts_voice"),
+    }
+
+
+class VoiceConfigUpdate(BaseModel):
+    tts_enabled: bool | None = None
+    tts_provider: str | None = None
+    tts_voice: str | None = None
+
+
+@router.post("/voice-config")
+async def set_voice_config(body: VoiceConfigUpdate, _: AdminUser) -> dict:
+    updates = {}
+    if body.tts_enabled is not None:
+        updates["tts_enabled"] = body.tts_enabled
+    if body.tts_provider is not None:
+        updates["tts_provider"] = body.tts_provider
+    if body.tts_voice is not None:
+        updates["tts_voice"] = body.tts_voice
+    if updates:
+        await rc.set_many(updates)
+        log.info("admin.voice_config_updated", **updates)
+    return {"status": "success", **rc.get_all()}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Prompt Playground
+# ══════════════════════════════════════════════════════════════════════════════
+
+class PlaygroundRequest(BaseModel):
+    prompt: str
+    model_id: str | None = None
+    temperature: float = 0.3
+    max_tokens: int = 600
+    system_prompt: str | None = None
+
+
+@router.post("/playground")
+async def prompt_playground(body: PlaygroundRequest, _: AdminUser) -> dict:
+    """Test a prompt against any configured LLM. Returns raw response."""
+    import time
+    model_id = body.model_id or rc.get("eval_model", "gpt-4o-mini")
+
+    messages = []
+    if body.system_prompt:
+        messages.append({"role": "system", "content": body.system_prompt})
+    messages.append({"role": "user", "content": body.prompt})
+
+    t0 = time.time()
+    try:
+        from app.providers.llm import call_llm
+        raw = await call_llm(
+            messages=messages,
+            model=model_id,
+            temperature=body.temperature,
+            max_tokens=body.max_tokens,
+        )
+        latency_ms = int((time.time() - t0) * 1000)
+        return {
+            "status": "success",
+            "response": raw,
+            "model": model_id,
+            "latency_ms": latency_ms,
+        }
+    except Exception as e:
+        latency_ms = int((time.time() - t0) * 1000)
+        log.error("playground.failed", model=model_id, error=str(e))
+        return {
+            "status": "error",
+            "error": str(e),
+            "model": model_id,
+            "latency_ms": latency_ms,
+        }
