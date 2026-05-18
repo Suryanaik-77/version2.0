@@ -9,19 +9,22 @@ import { Button, Card, Badge, Skeleton, MonoLabel, EmptyState, Divider } from '@
 import { toast } from '@/hooks/useToast'
 import { format } from 'date-fns'
 
-type AdminTab = 'overview' | 'sessions' | 'latency' | 'cost' | 'prompts' | 'users' | 'events'
+type AdminTab = 'overview' | 'sessions' | 'latency' | 'cost' | 'prompts' | 'users' | 'events' | 'llm' | 'voice' | 'playground'
 
 export default function AdminPage() {
   const [tab, setTab] = useState<AdminTab>('overview')
 
   const TABS: { id: AdminTab; label: string }[] = [
-    { id: 'overview',  label: 'Overview' },
-    { id: 'sessions',  label: 'Sessions' },
-    { id: 'latency',   label: 'Latency' },
-    { id: 'cost',      label: 'Cost' },
-    { id: 'prompts',   label: 'Prompts' },
-    { id: 'users',     label: 'Users' },
-    { id: 'events',    label: 'Events' },
+    { id: 'overview',    label: 'Overview' },
+    { id: 'sessions',    label: 'Sessions' },
+    { id: 'llm',         label: 'LLM Config' },
+    { id: 'voice',       label: 'Voice' },
+    { id: 'playground',  label: 'Playground' },
+    { id: 'latency',     label: 'Latency' },
+    { id: 'cost',        label: 'Cost' },
+    { id: 'prompts',     label: 'Prompts' },
+    { id: 'users',       label: 'Users' },
+    { id: 'events',      label: 'Events' },
   ]
 
   return (
@@ -52,13 +55,16 @@ export default function AdminPage() {
 
       {/* Content */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '28px 32px' }}>
-        {tab === 'overview'  && <OverviewTab />}
-        {tab === 'sessions'  && <SessionsTab />}
-        {tab === 'latency'   && <LatencyTab />}
-        {tab === 'cost'      && <CostTab />}
-        {tab === 'prompts'   && <PromptsTab />}
-        {tab === 'users'     && <UsersTab />}
-        {tab === 'events'    && <EventsTab />}
+        {tab === 'overview'    && <OverviewTab />}
+        {tab === 'sessions'    && <SessionsTab />}
+        {tab === 'llm'         && <LLMConfigTab />}
+        {tab === 'voice'       && <VoiceConfigTab />}
+        {tab === 'playground'  && <PlaygroundTab />}
+        {tab === 'latency'     && <LatencyTab />}
+        {tab === 'cost'        && <CostTab />}
+        {tab === 'prompts'     && <PromptsTab />}
+        {tab === 'users'       && <UsersTab />}
+        {tab === 'events'      && <EventsTab />}
       </div>
     </div>
   )
@@ -561,6 +567,219 @@ function EventsTab() {
   )
 }
 
+// ── LLM Config ───────────────────────────────────────────────────────────────
+
+function LLMConfigTab() {
+  const qc = useQueryClient()
+  const { data, isLoading } = useQuery({
+    queryKey: ['admin-llm-config'],
+    queryFn: () => adminApi.llmConfig().then(r => r.data),
+  })
+
+  const [qgen, setQgen] = useState('')
+  const [eval_, setEval] = useState('')
+
+  React.useEffect(() => {
+    if (data) { setQgen(data.qgen_model || ''); setEval(data.eval_model || '') }
+  }, [data])
+
+  const save = useMutation({
+    mutationFn: () => adminApi.setLlmConfig({ qgen_model: qgen, eval_model: eval_ }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['admin-llm-config'] }); toast.success('LLM config saved') },
+    onError: () => toast.error('Failed to save'),
+  })
+
+  if (isLoading) return <DashSkeleton />
+  const models = data?.available_models || []
+
+  return (
+    <div style={{ maxWidth: 640 }}>
+      <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 20, color: 'var(--text-0)', marginBottom: 24 }}>LLM Configuration</h2>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 24 }}>
+        <Card style={{ padding: 20 }}>
+          <MonoLabel style={{ display: 'block', marginBottom: 12 }}>Question Generation</MonoLabel>
+          <select value={qgen} onChange={e => setQgen(e.target.value)} style={selectStyle}>
+            {models.map((m: any) => <option key={m.id} value={m.id}>{m.name} ({m.tier})</option>)}
+          </select>
+          <p style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 8 }}>
+            {models.find((m: any) => m.id === qgen)?.cost || ''}
+          </p>
+        </Card>
+        <Card style={{ padding: 20 }}>
+          <MonoLabel style={{ display: 'block', marginBottom: 12 }}>Answer Evaluation</MonoLabel>
+          <select value={eval_} onChange={e => setEval(e.target.value)} style={selectStyle}>
+            {models.map((m: any) => <option key={m.id} value={m.id}>{m.name} ({m.tier})</option>)}
+          </select>
+          <p style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 8 }}>
+            {models.find((m: any) => m.id === eval_)?.cost || ''}
+          </p>
+        </Card>
+      </div>
+      <Button variant="primary" loading={save.isPending} onClick={() => save.mutate()}>
+        Save Configuration
+      </Button>
+    </div>
+  )
+}
+
+// ── Voice Config ─────────────────────────────────────────────────────────────
+
+function VoiceConfigTab() {
+  const qc = useQueryClient()
+  const { data, isLoading } = useQuery({
+    queryKey: ['admin-voice-config'],
+    queryFn: () => adminApi.voiceConfig().then(r => r.data),
+  })
+
+  const [enabled, setEnabled] = useState(true)
+  const [provider, setProvider] = useState('inworld')
+  const [voice, setVoice] = useState('')
+
+  React.useEffect(() => {
+    if (data) {
+      setEnabled(data.tts_enabled !== false)
+      setProvider(data.tts_provider || 'inworld')
+      setVoice(data.tts_voice || '')
+    }
+  }, [data])
+
+  const save = useMutation({
+    mutationFn: () => adminApi.setVoiceConfig({ tts_enabled: enabled, tts_provider: provider, tts_voice: voice }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['admin-voice-config'] }); toast.success('Voice config saved') },
+    onError: () => toast.error('Failed to save'),
+  })
+
+  const PROVIDERS = ['inworld', 'deepgram', 'browser']
+  const VOICES: Record<string, string[]> = {
+    inworld: ['Sarah', 'Ritu', 'Kira', 'Arvind'],
+    deepgram: ['aura-asteria-en', 'aura-luna-en', 'aura-orion-en', 'aura-perseus-en', 'aura-angus-en', 'aura-zeus-en'],
+    browser: ['default'],
+  }
+
+  if (isLoading) return <DashSkeleton />
+
+  return (
+    <div style={{ maxWidth: 480 }}>
+      <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 20, color: 'var(--text-0)', marginBottom: 24 }}>Voice Configuration</h2>
+      <Card style={{ padding: 20, marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: 'var(--text-1)' }}>
+            <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} />
+            TTS Enabled
+          </label>
+        </div>
+        <div style={{ marginBottom: 16 }}>
+          <MonoLabel style={{ display: 'block', marginBottom: 8 }}>Provider</MonoLabel>
+          <select value={provider} onChange={e => { setProvider(e.target.value); setVoice('') }} style={selectStyle}>
+            {PROVIDERS.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </div>
+        <div style={{ marginBottom: 16 }}>
+          <MonoLabel style={{ display: 'block', marginBottom: 8 }}>Voice</MonoLabel>
+          <select value={voice} onChange={e => setVoice(e.target.value)} style={selectStyle}>
+            <option value="">Select voice...</option>
+            {(VOICES[provider] || []).map(v => <option key={v} value={v}>{v}</option>)}
+          </select>
+        </div>
+      </Card>
+      <Button variant="primary" loading={save.isPending} onClick={() => save.mutate()}>
+        Save Voice Config
+      </Button>
+    </div>
+  )
+}
+
+// ── Prompt Playground ─────────────────────────────────────────────────────────
+
+function PlaygroundTab() {
+  const [prompt, setPrompt] = useState('')
+  const [system, setSystem] = useState('')
+  const [model, setModel] = useState('')
+  const [temp, setTemp] = useState(0.3)
+  const [result, setResult] = useState<any>(null)
+
+  const { data: llmData } = useQuery({
+    queryKey: ['admin-llm-config'],
+    queryFn: () => adminApi.llmConfig().then(r => r.data),
+  })
+
+  const run = useMutation({
+    mutationFn: () => adminApi.playground({
+      prompt,
+      system_prompt: system || undefined,
+      model_id: model || undefined,
+      temperature: temp,
+    }),
+    onSuccess: (r) => setResult(r.data),
+    onError: (e: any) => setResult({ status: 'error', error: e.message }),
+  })
+
+  const models = llmData?.available_models || []
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+      <div>
+        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 20, color: 'var(--text-0)', marginBottom: 20 }}>Prompt Playground</h2>
+        <Card style={{ padding: 20 }}>
+          <div style={{ marginBottom: 14 }}>
+            <MonoLabel style={{ display: 'block', marginBottom: 6 }}>System prompt (optional)</MonoLabel>
+            <textarea value={system} onChange={e => setSystem(e.target.value)} rows={3}
+              placeholder="e.g. You are a strict VLSI interviewer..."
+              style={{ ...textareaStyle }} />
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            <MonoLabel style={{ display: 'block', marginBottom: 6 }}>Prompt</MonoLabel>
+            <textarea value={prompt} onChange={e => setPrompt(e.target.value)} rows={8}
+              placeholder="Enter your prompt here..."
+              style={{ ...textareaStyle }} />
+          </div>
+          <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
+            <div style={{ flex: 1 }}>
+              <MonoLabel style={{ display: 'block', marginBottom: 6 }}>Model</MonoLabel>
+              <select value={model} onChange={e => setModel(e.target.value)} style={selectStyle}>
+                <option value="">Use eval model</option>
+                {models.map((m: any) => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </select>
+            </div>
+            <div style={{ width: 100 }}>
+              <MonoLabel style={{ display: 'block', marginBottom: 6 }}>Temp</MonoLabel>
+              <input type="number" value={temp} onChange={e => setTemp(Number(e.target.value))} step={0.1} min={0} max={1}
+                style={{ ...selectStyle, width: '100%' }} />
+            </div>
+          </div>
+          <Button variant="primary" loading={run.isPending} onClick={() => run.mutate()} style={{ width: '100%' }}>
+            Run
+          </Button>
+        </Card>
+      </div>
+      <div>
+        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 20, color: 'var(--text-0)', marginBottom: 20 }}>Response</h2>
+        <Card style={{ minHeight: 400 }}>
+          {result ? (
+            <>
+              <div style={{ display: 'flex', gap: 12, marginBottom: 14, fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-3)' }}>
+                <span>{result.model}</span>
+                <span>{result.latency_ms}ms</span>
+                <Badge variant={result.status === 'success' ? 'green' : 'red'}>{result.status}</Badge>
+              </div>
+              <pre style={{
+                fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-1)',
+                lineHeight: 1.7, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                background: 'var(--bg-1)', padding: '14px 16px',
+                borderRadius: 'var(--r-md)', maxHeight: 500, overflowY: 'auto',
+              }}>
+                {result.response || result.error || 'No output'}
+              </pre>
+            </>
+          ) : (
+            <EmptyState icon="⚡" title="Run a prompt" body="Enter a prompt and click Run to see the LLM response." />
+          )}
+        </Card>
+      </div>
+    </div>
+  )
+}
+
 // ── Shared ─────────────────────────────────────────────────────────────────────
 
 function DashSkeleton() {
@@ -578,5 +797,12 @@ const selectStyle: React.CSSProperties = {
   background: 'var(--bg-0)', border: '1px solid var(--border-2)',
   borderRadius: 'var(--r-md)', padding: '7px 12px',
   fontSize: 12, color: 'var(--text-1)', fontFamily: 'var(--font-mono)',
-  cursor: 'pointer', outline: 'none',
+  cursor: 'pointer', outline: 'none', width: '100%',
+}
+
+const textareaStyle: React.CSSProperties = {
+  width: '100%', padding: '10px 12px', border: '1px solid var(--border-2)',
+  borderRadius: 'var(--r-md)', fontSize: 12, fontFamily: 'var(--font-mono)',
+  color: 'var(--text-1)', background: 'var(--bg-1)', resize: 'vertical',
+  lineHeight: 1.6, outline: 'none',
 }

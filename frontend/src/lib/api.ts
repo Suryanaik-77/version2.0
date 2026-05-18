@@ -142,6 +142,14 @@ export const adminApi = {
   activatePrompt: (id: string)   => api.post(`/admin/prompts/${id}/activate`),
   promptContent:  (id: string)   => api.get(`/admin/prompts/${id}/content`),
   integrity:      (p?: object)   => api.get('/admin/integrity', { params: p }),
+  // LLM Config
+  llmConfig:      ()              => api.get('/admin/llm-config'),
+  setLlmConfig:   (d: object)    => api.post('/admin/llm-config', d),
+  // Voice Config
+  voiceConfig:    ()              => api.get('/admin/voice-config'),
+  setVoiceConfig: (d: object)    => api.post('/admin/voice-config', d),
+  // Prompt Playground
+  playground:     (d: object)    => api.post('/admin/playground', d),
 }
 
 export const integrityApi = {
