@@ -94,6 +94,17 @@ async def stream(
         topic_hint=f"Topic: {chosen_topic.replace('_', ' ')} — {concept.description}",
     )
 
+    # Debug: log what the LLM actually sees
+    log.info("question.prompt_built",
+             session_id=ctx.session_id,
+             turn=ctx.turn_number,
+             mode=ctx.mode.value,
+             transcript_len=len(ctx.transcript),
+             transcript_preview=ctx.transcript[:100] if ctx.transcript else "(empty)",
+             topic=chosen_topic,
+             recent_qs_count=len(recent_qs),
+             prompt_len=len(prompt))
+
     accumulated: list[str] = []
     first_sentence_done = False
     signals_emitted = False
