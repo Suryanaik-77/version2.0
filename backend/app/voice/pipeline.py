@@ -242,6 +242,9 @@ async def _run_tts_pipeline(
                         elapsed_ms=tracker.elapsed_ms("first_sentence"),
                     )
 
+                # Collect sentence text for frontend display
+                all_sentences.append(sentence)
+
                 # Start TTS synthesis immediately — don't wait for queue space first
                 tts_task = asyncio.create_task(
                     tts_provider.synthesize(sentence, session_id=session_id),
@@ -259,7 +262,10 @@ async def _run_tts_pipeline(
             await tts_queue.put(None)
 
     # ── Consumer ──────────────────────────────────────────────────────────────
+    all_sentences: list[str] = []
+
     async def consumer() -> None:
+        nonlocal all_sentences
         global _active_tts_streams
         idx = 0
         first_audio_sent = False
@@ -335,8 +341,8 @@ async def _run_tts_pipeline(
                 _active_tts_streams -= 1
 
         # Send full question text so frontend can display it
-        full_question = "".join(_collected_tokens).strip()
-        if full_question:
+        if all_sentences:
+            full_question = " ".join(all_sentences)
             from app.models.events import WSEvent, WSEventType
             text_event = WSEvent(
                 type=WSEventType.INTERVIEWER_CHUNK,
