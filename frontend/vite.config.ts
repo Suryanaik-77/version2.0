@@ -9,6 +9,7 @@ export default defineConfig({
   },
   server: {
     port: 3000,
+    allowedHosts: 'all',
     proxy: {
       // Dev proxy — routes frontend calls to local backend
       // Note: /api/* proxy removed — frontend never calls /api/*
