@@ -140,33 +140,119 @@ class OpenAITTS:
             yield _silence_pcm(300)
 
 
-# ── Inworld TTS stub ──────────────────────────────────────────────────────────
+# ── Deepgram Aura TTS ────────────────────────────────────────────────────────
 
-class InworldTTS:
+class DeepgramTTS:
     """
-    Inworld AI TTS adapter stub.
-    Interface correct; implementation pending Inworld API credentials.
-    Falls back to SilenceTTS for testing.
+    Deepgram Aura TTS via REST API.
+    Voices: aura-asteria-en, aura-luna-en, aura-orion-en, etc.
+    Returns MP3 bytes.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, voice: str = "aura-asteria-en") -> None:
+        self._api_key = getattr(settings, 'DEEPGRAM_API_KEY', '') or ''
+        self._voice = voice
         self.audio_format = "audio/mpeg"
-        self._api_key = settings.INWORLD_API_KEY
-        log.warning("tts.inworld_stub_active — using silence fallback")
 
     async def synthesize(self, text: str, session_id: str = "") -> bytes:
-        # TODO: implement Inworld REST/gRPC call
-        # API endpoint: TBD per Inworld credentials
-        # Expected response: MP3 or OGG bytes
-        return _silence_pcm(int(len(text.split()) * 0.45 * 1000))  # ~0.45s/word
+        if not text.strip() or not self._api_key:
+            return _silence_pcm(500)
+
+        import httpx
+        t_start = time.monotonic()
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                resp = await client.post(
+                    f"https://api.deepgram.com/v1/speak?model={self._voice}",
+                    headers={
+                        "Authorization": f"Token {self._api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={"text": text[:2000]},
+                )
+                resp.raise_for_status()
+                audio_bytes = resp.content
+                elapsed_ms = int((time.monotonic() - t_start) * 1000)
+                record_event("tts.synthesized", session_id=session_id,
+                             provider="deepgram", voice=self._voice,
+                             chars=len(text), bytes=len(audio_bytes), latency_ms=elapsed_ms)
+                log.info("tts.deepgram", voice=self._voice, latency_ms=elapsed_ms, chars=len(text))
+                return audio_bytes
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.error("tts.deepgram_error", error=str(exc), session_id=session_id)
+            return _silence_pcm(300)
 
     async def stream_synthesize(self, text: str, session_id: str = "") -> AsyncIterator[bytes]:
         audio = await self.synthesize(text, session_id)
-        # Yield in 4KB chunks to simulate streaming
-        chunk_size = 4096
-        for i in range(0, len(audio), chunk_size):
-            yield audio[i:i + chunk_size]
-            await asyncio.sleep(0)  # yield control
+        for i in range(0, len(audio), 4096):
+            yield audio[i:i + 4096]
+            await asyncio.sleep(0)
+
+
+# ── Inworld TTS ──────────────────────────────────────────────────────────────
+
+class InworldTTS:
+    """
+    Inworld AI TTS via REST API.
+    Endpoint: https://api.inworld.ai/tts/v1/voice
+    Auth: Basic {API_KEY}
+    """
+
+    def __init__(self, voice: str = "Sarah", model: str = "inworld-tts-1.5-mini") -> None:
+        self._api_key = getattr(settings, 'INWORLD_API_KEY', '') or ''
+        self._voice = voice
+        self._model = model
+        self.audio_format = "audio/mpeg"
+
+    async def synthesize(self, text: str, session_id: str = "") -> bytes:
+        if not text.strip() or not self._api_key:
+            return _silence_pcm(500)
+
+        import httpx
+        t_start = time.monotonic()
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                resp = await client.post(
+                    "https://api.inworld.ai/tts/v1/voice",
+                    headers={
+                        "Authorization": f"Basic {self._api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "text": text[:2000],
+                        "voiceId": self._voice,
+                        "modelId": self._model,
+                    },
+                )
+                resp.raise_for_status()
+                # Inworld returns JSON with audioContent (base64) or raw bytes
+                content_type = resp.headers.get("content-type", "")
+                if "json" in content_type:
+                    import base64
+                    data = resp.json()
+                    audio_bytes = base64.b64decode(data.get("audioContent", ""))
+                else:
+                    audio_bytes = resp.content
+
+                elapsed_ms = int((time.monotonic() - t_start) * 1000)
+                record_event("tts.synthesized", session_id=session_id,
+                             provider="inworld", voice=self._voice,
+                             chars=len(text), bytes=len(audio_bytes), latency_ms=elapsed_ms)
+                log.info("tts.inworld", voice=self._voice, latency_ms=elapsed_ms, chars=len(text))
+                return audio_bytes
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.error("tts.inworld_error", error=str(exc), session_id=session_id)
+            return _silence_pcm(300)
+
+    async def stream_synthesize(self, text: str, session_id: str = "") -> AsyncIterator[bytes]:
+        audio = await self.synthesize(text, session_id)
+        for i in range(0, len(audio), 4096):
+            yield audio[i:i + 4096]
+            await asyncio.sleep(0)
 
 
 # ── Silence TTS (test/fallback) ───────────────────────────────────────────────
@@ -215,14 +301,25 @@ def get_tts_provider() -> TTSProvider:
     provider = get("tts_provider", "openai")
     voice = get("tts_voice", "")
 
+    if provider == "deepgram":
+        dg_key = getattr(settings, 'DEEPGRAM_API_KEY', '')
+        if dg_key:
+            return DeepgramTTS(voice=voice or "aura-asteria-en")
+        log.warning("tts.deepgram_no_key — falling back")
+
+    if provider == "inworld":
+        iw_key = getattr(settings, 'INWORLD_API_KEY', '')
+        if iw_key:
+            return InworldTTS(voice=voice or "Sarah")
+        log.warning("tts.inworld_no_key — falling back")
+
     if provider == "openai" and settings.OPENAI_API_KEY:
         tts = OpenAITTS()
         if voice:
-            tts._voice = voice  # override default 'nova' with admin-selected voice
+            tts._voice = voice
         return tts
 
-    # Deepgram, Inworld, Puter — not yet implemented server-side
-    # Fall back to OpenAI if available
+    # Fallback: OpenAI if available, else silence
     if settings.OPENAI_API_KEY:
         return OpenAITTS()
 

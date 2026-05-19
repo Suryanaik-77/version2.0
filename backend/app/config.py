@@ -49,6 +49,9 @@ class Settings(BaseSettings):
 
     MISTRAL_API_KEY: str = ""
     INWORLD_API_KEY: str = ""
+    DEEPGRAM_API_KEY: str = ""
+    INWORLD_VOICE_ID: str = "Sarah"
+    INWORLD_MODEL_ID: str = "inworld-tts-1.5-mini"
 
     # V2 product fields
     DOMAIN: str = "localhost"
