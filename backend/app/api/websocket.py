@@ -232,6 +232,12 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
     
     await hub.connect(session_id, connection_id, websocket, is_admin=is_admin)
 
+    # ── Send opening question immediately ───────────────────────────────────────
+    asyncio.create_task(
+        _send_opening(session_id, connection_id),
+        name=f"opening_{session_id}",
+    )
+
     # ── Launch concurrent tasks ───────────────────────────────────────────────
     receive_task  = asyncio.create_task(_receive_loop(session_id, connection_id, websocket, is_admin))
     sub_task      = asyncio.create_task(_redis_sub_loop(session_id, connection_id))
@@ -260,6 +266,38 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
 
 
 # ── Receive loop ──────────────────────────────────────────────────────────────
+
+async def _send_opening(session_id: str, connection_id: str) -> None:
+    """Send the opening interviewer question + TTS audio right after connection."""
+    try:
+        from app.engines.interview import generate_opening
+        from app.providers.tts import get_tts_provider
+        from app.models.events import interviewer_chunk_event, interviewer_done_event
+
+        # Generate opening text
+        opening_text = ""
+        async for token in generate_opening(session_id):
+            opening_text += token
+
+        # Send text to client
+        chunk_event = interviewer_chunk_event(session_id, opening_text)
+        await hub.send_to_connection(connection_id, chunk_event.to_json())
+
+        done_event = interviewer_done_event(session_id, opening_text)
+        await hub.send_to_connection(connection_id, done_event.to_json())
+
+        # Synthesize and send audio
+        tts = get_tts_provider()
+        audio_bytes = await tts.synthesize(opening_text, session_id=session_id)
+        if audio_bytes and len(audio_bytes) > 100:
+            ws = hub._connections.get(connection_id)
+            if ws:
+                await ws.send_bytes(audio_bytes)
+
+        log.info("ws.opening_sent", session_id=session_id, chars=len(opening_text))
+    except Exception as exc:
+        log.error("ws.opening_failed", session_id=session_id, error=str(exc))
+
 
 async def _receive_loop(
     session_id: str,

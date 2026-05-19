@@ -70,12 +70,12 @@ class OpenAIWhisperSTT:
 
             response = await asyncio.wait_for(
                 self._client.audio.transcriptions.create(
-                    model="whisper-1",
+                    model="gpt-4o-mini-transcribe",
                     file=audio_file,
                     language="en",
                     response_format="text",
                 ),
-                timeout=settings.STT_TIMEOUT_MS / 1000,
+                timeout=3.0,  # gpt-4o-mini-transcribe needs more time than whisper
             )
 
             transcript = str(response).strip()
