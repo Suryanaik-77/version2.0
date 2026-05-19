@@ -79,6 +79,7 @@ async def stream(
         transcript=ctx.transcript,
         memory_context=memory_context,
         recent_questions=recent_qs,
+        resume=ctx.resume.model_dump() if ctx.resume else None,
     )
 
     accumulated: list[str] = []

@@ -209,6 +209,7 @@ def build_question_prompt(
     signals: InlineSignals | None = None,
     consecutive_weak: int = 0,
     consecutive_strong: int = 0,
+    resume: dict | None = None,
 ) -> str:
     """
     Deterministic rule-based prompt assembly.
@@ -244,6 +245,26 @@ def build_question_prompt(
     # Corpus example — always 1, ~30 tokens
     example_block = _corpus_example_block(mode, signals)
 
+    # Resume block — candidate profile for personalized questions
+    resume_block = ""
+    if resume:
+        name = resume.get("candidate_name", "")
+        level = resume.get("level", "").replace("_", " ")
+        years = resume.get("years_experience", "")
+        tools = ", ".join(resume.get("tools", [])[:5]) or ""
+        projects = ", ".join(resume.get("key_projects", [])[:3]) or ""
+        skills = ", ".join(resume.get("skills", [])[:8]) or ""
+        parts = [f"CANDIDATE: {name}" if name else ""]
+        if level or years:
+            parts.append(f"{level} | {years} years" if years else level)
+        if tools:
+            parts.append(f"Tools: {tools}")
+        if projects:
+            parts.append(f"Projects: {projects}")
+        if skills:
+            parts.append(f"Skills: {skills}")
+        resume_block = " | ".join(p for p in parts if p)
+
     # Anti-repetition — last 2 questions only
     avoid_block = ""
     if recent_questions:
@@ -253,6 +274,7 @@ def build_question_prompt(
     # Assemble — blocks that are empty strings contribute nothing
     blocks = filter(None, [
         f"DOMAIN: {_domain_label(domain)}",
+        resume_block,
         f"INTERVIEW PHASE: {mode_label}",
         signal_block,
         trend_block,

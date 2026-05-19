@@ -103,6 +103,7 @@ async def run_turn(
         domain=state.active_domain,
         mode=state.mode,
         memory=memory,
+        resume=state.resume,
         prior_answers=prior_answers,
     )
 
@@ -219,24 +220,28 @@ async def generate_opening(session_id: str) -> AsyncIterator[str]:
     if not state:
         raise SessionNotFoundError(session_id)
 
-    # Opening prompts per domain — no LLM needed, instant
+    # Personalize opening with resume
+    name = state.resume.candidate_name.split()[0] if state.resume.candidate_name != "Candidate" else ""
+    level = state.resume.level.replace("_", " ") if state.resume.level else ""
+    greeting = f"Hi {name}, " if name else ""
+    domain_key = state.active_domain.value
+
     opening_lines = {
         "ANALOG_LAYOUT": (
-            "Let's get started. Walk me through the most complex analog layout "
+            f"{greeting}let's get started. Walk me through the most complex analog layout "
             "you've personally designed — I want to understand the matching strategy you chose and why."
         ),
         "PHYSICAL_DESIGN": (
-            "Let's get into it. Describe the last physical design you owned — "
+            f"{greeting}let's get into it. Describe the last physical design you owned — "
             "what was the most difficult timing closure challenge you ran into and how did you resolve it?"
         ),
         "DESIGN_VERIFICATION": (
-            "Let's begin. Tell me about the most complex verification environment "
+            f"{greeting}let's begin. Tell me about the most complex verification environment "
             "you've built — what was the coverage model and how did you close it?"
         ),
     }
 
-    domain_key = state.active_domain.value
-    opening = opening_lines.get(domain_key, "Tell me about the most technically challenging project you've worked on.")
+    opening = opening_lines.get(domain_key, f"{greeting}tell me about the most technically challenging project you've worked on.")
 
     # Stream character by character for natural feel
     # (In Phase 3 this goes to TTS — for now yield as single token)

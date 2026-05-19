@@ -192,6 +192,7 @@ class TurnContext(BaseModel):
     domain: VLSIDomain
     mode: InterviewerMode
     memory: CandidateMemory
+    resume: ResumeData = Field(default_factory=ResumeData)
     prior_answers: list[str] = Field(default_factory=list)   # last 3
     inline_signals: InlineSignals | None = None
 
