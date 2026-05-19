@@ -335,20 +335,15 @@ function handleMessage(msg: Record<string, unknown>) {
 
     case 'INTERVIEWER_CHUNK':
       // Audio bytes arrive as binary frame (handled in onmessage above)
-      // This JSON frame carries metadata + question text
-      if (p.text) {
-        if (p.is_final) {
-          // Full question text — replace (not append)
-          useInterview.setState({ currentQuestion: p.text })
-        } else {
-          store.appendToken(p.text)
-        }
+      // This JSON frame carries question text
+      if (p.text && p.is_final) {
+        useInterview.setState({ currentQuestion: p.text })
       }
       store.setAudioState('speaking')
       break
 
     case 'INTERVIEWER_DONE':
-      // All audio for this turn enqueued. Silence set after queue drains.
+      // All audio sent. Don't clear question — let TURN_START of next turn do that.
       break
 
     case 'SESSION_START':

@@ -126,16 +126,19 @@ class WebSocketHub:
 
     async def send_bytes_to_session(self, session_id: str, data: bytes) -> None:
         """Send binary audio data to all candidate connections for a session."""
-        for conn_id in list(self._local_session_conns.get(session_id, set())):
-            # Skip admin connections for audio
+        conns = list(self._local_session_conns.get(session_id, set()))
+        if not conns:
+            log.warning("ws.no_connections_for_audio", session_id=session_id, bytes=len(data))
+            return
+        for conn_id in conns:
             if conn_id in self._admin_connections.get(session_id, set()):
                 continue
             ws = self._connections.get(conn_id)
             if ws:
                 try:
                     await ws.send_bytes(data)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    log.warning("ws.audio_send_failed", session_id=session_id, error=str(exc), bytes=len(data))
 
     async def publish_to_session(self, session_id: str, event_json: str) -> None:
         """

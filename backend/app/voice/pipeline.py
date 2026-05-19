@@ -294,12 +294,7 @@ async def _run_tts_pipeline(
                 if idx == 0:
                     tracker.mark("tts_start")
 
-                # Send metadata frame (JSON)
-                is_final = False  # we don't know yet — determined when sentinel arrives
-                meta_event = interviewer_chunk_event(session_id, idx, is_final=False)
-                await ws_hub.publish_to_session(session_id, meta_event.to_json())
-
-                # Send audio bytes (binary frame)
+                # Send audio bytes directly (no pub/sub race condition)
                 t_send_start = time.monotonic()
                 await ws_hub.send_bytes_to_session(session_id, audio_bytes)
                 send_ms = int((time.monotonic() - t_send_start) * 1000)
