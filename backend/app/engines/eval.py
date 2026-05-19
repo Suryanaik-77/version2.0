@@ -85,6 +85,13 @@ async def run_async_eval(
 
         flags: list[str] = scores.pop("flags", [])
 
+        # Step 2.5: Validate and fix contradictions (~0.1ms, no I/O)
+        from app.engines.eval_validator import validate_and_fix
+        scores, validation_flags = validate_and_fix(scores, transcript)
+        flags.extend(validation_flags)
+        if validation_flags:
+            log.info("eval.validated", session_id=session_id, turn=turn_number, fixes=validation_flags)
+
         # Step 3: Read current state for strategy decision
         from app.core.session import get_session
         state = await get_session(session_id)

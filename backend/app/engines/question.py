@@ -70,6 +70,17 @@ async def stream(
       - First token yield: < 400ms from this function being called
       - First sentence complete: < 800ms
     """
+    # Topic selection — pure CPU, < 0.1ms
+    from app.engines.taxonomy import pick_next_topic
+    topic_coverage = ctx.memory.model_dump().get("_topic_coverage", {}) if ctx.memory else {}
+    last_topic = ctx.memory.model_dump().get("_last_topic", "") if ctx.memory else ""
+    chosen_topic, concept = pick_next_topic(
+        domain=ctx.domain.value,
+        coverage=topic_coverage,
+        turn_count=ctx.turn_number,
+        last_topic=last_topic,
+    )
+
     # Build prompt — pure CPU work, < 1ms
     memory_context = mem.compress_for_injection(ctx.memory)
     recent_qs = _get_recent_questions(ctx)
@@ -80,6 +91,7 @@ async def stream(
         memory_context=memory_context,
         recent_questions=recent_qs,
         resume=ctx.resume.model_dump() if ctx.resume else None,
+        topic_hint=f"Topic: {chosen_topic.replace('_', ' ')} — {concept.description}",
     )
 
     accumulated: list[str] = []
@@ -154,6 +166,11 @@ async def stream(
             asyncio.create_task(
                 _store_generated_question(ctx.session_id, ctx.turn_number, question_text),
                 name=f"store_q_{ctx.session_id}_{ctx.turn_number}",
+            )
+            # Update topic coverage in memory (non-blocking)
+            asyncio.create_task(
+                _update_topic_coverage(ctx.session_id, chosen_topic),
+                name=f"topic_cov_{ctx.session_id}_{ctx.turn_number}",
             )
 
 
@@ -254,10 +271,27 @@ async def _store_generated_question(session_id: str, turn_number: int, question:
 
 
 def _get_recent_questions(ctx: TurnContext) -> list[str]:
-    """Extract recent questions from turn history. Returns empty on turn 1."""
-    # prior_answers contains turn summaries including questions
-    # For now return empty — Phase 3 will wire up full turn history read
-    return []
+    """Extract recent questions from prior answers."""
+    return [a for a in ctx.prior_answers if a] if ctx.prior_answers else []
+
+
+async def _update_topic_coverage(session_id: str, topic: str) -> None:
+    """Update topic coverage count in Redis memory. Non-blocking."""
+    try:
+        memory = await mem.get_snapshot(session_id)
+        if memory is None:
+            return
+        d = memory.model_dump()
+        coverage = d.get("_topic_coverage", {})
+        coverage[topic] = coverage.get(topic, 0) + 1
+        d["_topic_coverage"] = coverage
+        d["_last_topic"] = topic
+        # Write back — we're updating raw dict fields not in the Pydantic model
+        rds = r._get_pool()
+        import json
+        await rds.setex(f"memory:{session_id}", 14400, json.dumps(d))
+    except Exception as e:
+        log.warning("topic_coverage.update_failed", error=str(e))
 
 
 # ── Fallback question (LLM failure path) ─────────────────────────────────────

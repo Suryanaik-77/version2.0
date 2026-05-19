@@ -210,6 +210,7 @@ def build_question_prompt(
     consecutive_weak: int = 0,
     consecutive_strong: int = 0,
     resume: dict | None = None,
+    topic_hint: str = "",
 ) -> str:
     """
     Deterministic rule-based prompt assembly.
@@ -275,6 +276,7 @@ def build_question_prompt(
     blocks = filter(None, [
         f"DOMAIN: {_domain_label(domain)}",
         resume_block,
+        topic_hint,
         f"INTERVIEW PHASE: {mode_label}",
         signal_block,
         trend_block,
