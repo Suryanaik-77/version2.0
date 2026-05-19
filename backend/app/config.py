@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     REDIS_PUBSUB_URL: str = "redis://localhost:6379/0"
 
     # ── PostgreSQL ───────────────────────────────────────────────────
-    DATABASE_URL: str = "postgresql+asyncpg://vlsi:vlsi@localhost:5432/vlsi_interview"
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:test%40123@localhost:5432/vlsi_interview_v2"
 
     # ── Auth ─────────────────────────────────────────────────────────
     JWT_SECRET_KEY: str = "change-in-production"
