@@ -308,6 +308,8 @@ function handleMessage(msg: Record<string, unknown>) {
     case 'TURN_START':
       store.setAudioState('thinking')
       if (p.mode) store.setMode(p.mode as InterviewMode)
+      // Clear previous question for new turn
+      useInterview.setState({ currentQuestion: '', transcript: '' })
       break
 
     case 'TURN_COMPLETE':
@@ -335,7 +337,12 @@ function handleMessage(msg: Record<string, unknown>) {
       // Audio bytes arrive as binary frame (handled in onmessage above)
       // This JSON frame carries metadata + question text
       if (p.text) {
-        store.appendToken(p.text)
+        if (p.is_final) {
+          // Full question text — replace (not append)
+          useInterview.setState({ currentQuestion: p.text })
+        } else {
+          store.appendToken(p.text)
+        }
       }
       store.setAudioState('speaking')
       break

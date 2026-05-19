@@ -334,6 +334,17 @@ async def _run_tts_pipeline(
             finally:
                 _active_tts_streams -= 1
 
+        # Send full question text so frontend can display it
+        full_question = "".join(_collected_tokens).strip()
+        if full_question:
+            from app.models.events import WSEvent, WSEventType
+            text_event = WSEvent(
+                type=WSEventType.INTERVIEWER_CHUNK,
+                session_id=session_id,
+                payload={"text": full_question, "sentence_index": idx, "is_final": True},
+            )
+            await ws_hub.publish_to_session(session_id, text_event.to_json())
+
         # Send final "done" event
         done_event = interviewer_done_event(session_id, idx)
         await ws_hub.publish_to_session(session_id, done_event.to_json())
