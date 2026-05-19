@@ -551,6 +551,7 @@ async def get_active_system_prompt(prompt_type: str) -> str | None:
     from the hot path.
     """
     try:
+        from app.db.models import PromptVersion
         async with db_session() as db:
             pv = await db.scalar(
                 select(PromptVersion).where(

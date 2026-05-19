@@ -289,7 +289,11 @@ async def _update_topic_coverage(session_id: str, topic: str) -> None:
         # Write back — we're updating raw dict fields not in the Pydantic model
         rds = r._get_pool()
         import json
-        await rds.setex(f"memory:{session_id}", 14400, json.dumps(d))
+        def _default(o):
+            if hasattr(o, 'isoformat'):
+                return o.isoformat()
+            return str(o)
+        await rds.setex(f"memory:{session_id}", 14400, json.dumps(d, default=_default))
     except Exception as e:
         log.warning("topic_coverage.update_failed", error=str(e))
 

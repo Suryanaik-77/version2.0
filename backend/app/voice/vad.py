@@ -37,10 +37,10 @@ CHUNK_BYTES      = int(SAMPLE_RATE * CHUNK_MS / 1000 * BYTES_PER_SAMPLE)
 
 # VAD tuning
 ENERGY_THRESHOLD  = 500     # RMS threshold for speech detection (0-32767)
-SILENCE_FRAMES    = 40      # 40 frames × 20ms = 800ms silence → end of utterance
+SILENCE_FRAMES    = 25      # 25 frames × 20ms = 500ms silence → end of utterance (faster response)
 MIN_SPEECH_FRAMES = 5       # Minimum frames of speech (100ms) to consider valid
-MAX_UTTERANCE_S   = 30      # Abort if candidate speaks for > 30s without pause
-SPEECH_HANGOVER   = 8       # Continue recording for 8 frames after speech ends
+MAX_UTTERANCE_S   = 15      # Abort if candidate speaks for > 15s without pause
+SPEECH_HANGOVER   = 5       # Continue recording for 5 frames after speech ends
 
 
 @dataclass
