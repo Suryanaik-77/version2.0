@@ -567,7 +567,12 @@ function EventsTab() {
   )
 }
 
-// ── LLM Config ───────────────────────────────────────────────────────────────
+// ── LLM Config (full — matches monolith) ────────────────────────────────────
+
+const TIER_COLORS: Record<string, string> = {
+  fast: 'var(--blue, #3b82f6)', balanced: 'var(--green, #22c55e)',
+  premium: 'var(--purple, #a855f7)', external: 'var(--text-3)',
+}
 
 function LLMConfigTab() {
   const qc = useQueryClient()
@@ -591,38 +596,130 @@ function LLMConfigTab() {
 
   if (isLoading) return <DashSkeleton />
   const models = data?.available_models || []
+  const qgenModel = models.find((m: any) => m.id === qgen)
+  const evalModel = models.find((m: any) => m.id === eval_)
 
   return (
-    <div style={{ maxWidth: 640 }}>
-      <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 20, color: 'var(--text-0)', marginBottom: 24 }}>LLM Configuration</h2>
+    <div style={{ maxWidth: 720 }}>
+      <div style={{ marginBottom: 28 }}>
+        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 20, color: 'var(--text-0)', marginBottom: 4 }}>Model Selection</h2>
+        <p style={{ fontSize: 12, color: 'var(--text-3)' }}>Choose which LLM handles question generation and answer evaluation. Changes apply immediately.</p>
+      </div>
+
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 24 }}>
+        {/* Question Generation */}
         <Card style={{ padding: 20 }}>
-          <MonoLabel style={{ display: 'block', marginBottom: 12 }}>Question Generation</MonoLabel>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+            <div style={{ width: 28, height: 28, borderRadius: 7, background: 'rgba(59,130,246,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <span style={{ fontSize: 14 }}>⚡</span>
+            </div>
+            <div>
+              <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-0)' }}>Question Generation</p>
+              <p style={{ fontSize: 10, color: 'var(--text-3)' }}>Needs speed over accuracy</p>
+            </div>
+          </div>
           <select value={qgen} onChange={e => setQgen(e.target.value)} style={selectStyle}>
             {models.map((m: any) => <option key={m.id} value={m.id}>{m.name} ({m.tier})</option>)}
           </select>
-          <p style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 8 }}>
-            {models.find((m: any) => m.id === qgen)?.cost || ''}
-          </p>
+          {qgenModel && (
+            <div style={{ marginTop: 10, padding: '8px 10px', background: 'var(--bg-1)', borderRadius: 6, fontSize: 11 }}>
+              <div style={{ color: TIER_COLORS[qgenModel.tier] || 'var(--text-2)', fontWeight: 500, marginBottom: 2 }}>{qgenModel.tier.toUpperCase()}</div>
+              <div style={{ color: 'var(--text-3)' }}>{qgenModel.cost}</div>
+              {qgenModel.best_for && <div style={{ color: 'var(--text-3)', marginTop: 2 }}>{qgenModel.best_for}</div>}
+            </div>
+          )}
         </Card>
+
+        {/* Evaluation */}
         <Card style={{ padding: 20 }}>
-          <MonoLabel style={{ display: 'block', marginBottom: 12 }}>Answer Evaluation</MonoLabel>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+            <div style={{ width: 28, height: 28, borderRadius: 7, background: 'rgba(34,197,94,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <span style={{ fontSize: 14 }}>✓</span>
+            </div>
+            <div>
+              <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-0)' }}>Answer Evaluation</p>
+              <p style={{ fontSize: 10, color: 'var(--text-3)' }}>Needs accuracy over speed</p>
+            </div>
+          </div>
           <select value={eval_} onChange={e => setEval(e.target.value)} style={selectStyle}>
             {models.map((m: any) => <option key={m.id} value={m.id}>{m.name} ({m.tier})</option>)}
           </select>
-          <p style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 8 }}>
-            {models.find((m: any) => m.id === eval_)?.cost || ''}
-          </p>
+          {evalModel && (
+            <div style={{ marginTop: 10, padding: '8px 10px', background: 'var(--bg-1)', borderRadius: 6, fontSize: 11 }}>
+              <div style={{ color: TIER_COLORS[evalModel.tier] || 'var(--text-2)', fontWeight: 500, marginBottom: 2 }}>{evalModel.tier.toUpperCase()}</div>
+              <div style={{ color: 'var(--text-3)' }}>{evalModel.cost}</div>
+              {evalModel.best_for && <div style={{ color: 'var(--text-3)', marginTop: 2 }}>{evalModel.best_for}</div>}
+            </div>
+          )}
         </Card>
       </div>
-      <Button variant="primary" loading={save.isPending} onClick={() => save.mutate()}>
-        Save Configuration
-      </Button>
+
+      <Button variant="primary" loading={save.isPending} onClick={() => save.mutate()}>Save Configuration</Button>
+      <span style={{ marginLeft: 12, fontSize: 12, color: 'var(--green, #22c55e)' }}>{save.isSuccess ? 'Saved' : ''}</span>
+
+      {/* Model Reference */}
+      <div style={{ marginTop: 32, paddingTop: 20, borderTop: '1px solid var(--border-0)' }}>
+        <MonoLabel style={{ display: 'block', marginBottom: 14 }}>Model Reference</MonoLabel>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, fontSize: 11 }}>
+          <div style={{ padding: '10px 12px', background: 'rgba(59,130,246,0.05)', borderRadius: 7, border: '1px solid rgba(59,130,246,0.15)' }}>
+            <div style={{ fontWeight: 600, color: 'var(--blue, #3b82f6)', marginBottom: 4 }}>Fast Tier</div>
+            <div style={{ color: 'var(--text-2)' }}>Haiku 4.5, Grok Fast, Nova Lite<br/>Best for question generation</div>
+          </div>
+          <div style={{ padding: '10px 12px', background: 'rgba(34,197,94,0.05)', borderRadius: 7, border: '1px solid rgba(34,197,94,0.15)' }}>
+            <div style={{ fontWeight: 600, color: 'var(--green, #22c55e)', marginBottom: 4 }}>Balanced Tier</div>
+            <div style={{ color: 'var(--text-2)' }}>Sonnet 4.5/4.6, Grok 4.3<br/>Best for evaluation</div>
+          </div>
+          <div style={{ padding: '10px 12px', background: 'rgba(168,85,247,0.05)', borderRadius: 7, border: '1px solid rgba(168,85,247,0.15)' }}>
+            <div style={{ fontWeight: 600, color: 'var(--purple, #a855f7)', marginBottom: 4 }}>Premium Tier</div>
+            <div style={{ color: 'var(--text-2)' }}>Opus 4.6/4.7<br/>Highest accuracy, slowest</div>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
 
-// ── Voice Config ─────────────────────────────────────────────────────────────
+// ── Voice Config (full — all providers + TTS playground) ─────────────────────
+
+const VOICE_PROVIDERS: { id: string; label: string }[] = [
+  { id: 'inworld', label: 'Inworld TTS' },
+  { id: 'deepgram', label: 'Deepgram Aura' },
+  { id: 'puter', label: 'Puter TTS (free)' },
+  { id: 'openai', label: 'OpenAI TTS' },
+]
+
+const ALL_VOICES: Record<string, { id: string; label: string }[]> = {
+  inworld: [
+    { id: 'Sarah', label: 'Sarah (American)' }, { id: 'Emma', label: 'Emma (British)' },
+    { id: 'Priya', label: 'Priya (Indian)' }, { id: 'Ananya', label: 'Ananya (Indian)' },
+    { id: 'Clive', label: 'Clive (British)' }, { id: 'Raj', label: 'Raj (Indian)' },
+    { id: 'default-mhhlz-fgtvvnjgmtx5spya__ranjitha', label: 'Ranjitha (clone)' },
+    { id: 'default-mhhlz-fgtvvnjgmtx5spya__ritu', label: 'Ritu (clone)' },
+  ],
+  deepgram: [
+    { id: 'aura-asteria-en', label: 'Asteria (female)' }, { id: 'aura-luna-en', label: 'Luna (female)' },
+    { id: 'aura-stella-en', label: 'Stella (female)' }, { id: 'aura-athena-en', label: 'Athena (female)' },
+    { id: 'aura-hera-en', label: 'Hera (female)' }, { id: 'aura-orion-en', label: 'Orion (male)' },
+    { id: 'aura-arcas-en', label: 'Arcas (male)' }, { id: 'aura-perseus-en', label: 'Perseus (male)' },
+    { id: 'aura-angus-en', label: 'Angus (male)' }, { id: 'aura-zeus-en', label: 'Zeus (male)' },
+  ],
+  puter: [
+    { id: 'xai:eve', label: 'xAI Eve (female)' }, { id: 'xai:ara', label: 'xAI Ara (female)' },
+    { id: 'xai:rex', label: 'xAI Rex (male)' }, { id: 'gemini:Puck', label: 'Gemini Puck' },
+    { id: 'gemini:Kore', label: 'Gemini Kore' }, { id: 'gemini:Charon', label: 'Gemini Charon' },
+    { id: 'aws-polly:Joanna', label: 'Polly Joanna (US)' }, { id: 'aws-polly:Kajal', label: 'Polly Kajal (Indian)' },
+    { id: 'aws-polly:Amy', label: 'Polly Amy (British)' }, { id: 'aws-polly:Matthew', label: 'Polly Matthew (US)' },
+    { id: 'elevenlabs:21m00Tcm4TlvDq8ikWAM', label: 'ElevenLabs Rachel' },
+    { id: 'elevenlabs:EXAVITQu4vr4xnSDxMaL', label: 'ElevenLabs Bella' },
+    { id: 'elevenlabs:pNInz6obpgDQGcFmaJgB', label: 'ElevenLabs Adam' },
+  ],
+  openai: [
+    { id: 'alloy', label: 'Alloy' }, { id: 'ash', label: 'Ash' }, { id: 'ballad', label: 'Ballad' },
+    { id: 'coral', label: 'Coral' }, { id: 'echo', label: 'Echo' }, { id: 'fable', label: 'Fable' },
+    { id: 'nova', label: 'Nova' }, { id: 'onyx', label: 'Onyx' }, { id: 'sage', label: 'Sage' },
+    { id: 'shimmer', label: 'Shimmer' },
+  ],
+}
 
 function VoiceConfigTab() {
   const qc = useQueryClient()
@@ -634,6 +731,8 @@ function VoiceConfigTab() {
   const [enabled, setEnabled] = useState(true)
   const [provider, setProvider] = useState('inworld')
   const [voice, setVoice] = useState('')
+  const [testText, setTestText] = useState("Hi Rahul, welcome to the interview. I'm going to ask you about clock tree synthesis today. Let's start simple — what is clock skew and why does it matter?")
+  const [testStatus, setTestStatus] = useState('')
 
   React.useEffect(() => {
     if (data) {
@@ -649,54 +748,121 @@ function VoiceConfigTab() {
     onError: () => toast.error('Failed to save'),
   })
 
-  const PROVIDERS = ['inworld', 'deepgram', 'browser']
-  const VOICES: Record<string, string[]> = {
-    inworld: ['Sarah', 'Ritu', 'Kira', 'Arvind'],
-    deepgram: ['aura-asteria-en', 'aura-luna-en', 'aura-orion-en', 'aura-perseus-en', 'aura-angus-en', 'aura-zeus-en'],
-    browser: ['default'],
+  const setInterview = useMutation({
+    mutationFn: () => adminApi.setVoiceConfig({ tts_provider: provider, tts_voice: voice }),
+    onSuccess: () => toast.success(`Interview voice set to ${voice} (${provider})`),
+    onError: () => toast.error('Failed to set interview voice'),
+  })
+
+  const testVoice = async () => {
+    if (!testText.trim()) return
+    setTestStatus('Generating...')
+    try {
+      // For Puter voices, use client-side TTS
+      if (provider === 'puter' && (window as any).puter) {
+        const [puterProvider, puterVoice] = voice.split(':')
+        const opts: any = { provider: puterProvider, voice: puterVoice }
+        if (puterProvider === 'aws-polly') { opts.engine = 'neural'; opts.language = 'en-US' }
+        if (puterProvider === 'openai') { opts.model = 'gpt-4o-mini-tts' }
+        if (puterProvider === 'elevenlabs') { opts.model = 'eleven_multilingual_v2' }
+        const t0 = Date.now()
+        const audio = await (window as any).puter.ai.txt2speech(testText, opts)
+        setTestStatus(`Playing (${puterProvider}) — ${Date.now() - t0}ms`)
+        audio.play()
+        audio.onended = () => setTestStatus(`Done — ${Date.now() - t0}ms`)
+      } else {
+        setTestStatus(`Testing ${provider}/${voice}... (server TTS not wired yet)`)
+      }
+    } catch (e: any) {
+      setTestStatus(`Error: ${e.message}`)
+    }
   }
 
   if (isLoading) return <DashSkeleton />
+  const voices = ALL_VOICES[provider] || []
 
   return (
-    <div style={{ maxWidth: 480 }}>
-      <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 20, color: 'var(--text-0)', marginBottom: 24 }}>Voice Configuration</h2>
-      <Card style={{ padding: 20, marginBottom: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: 'var(--text-1)' }}>
-            <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} />
-            TTS Enabled
-          </label>
-        </div>
-        <div style={{ marginBottom: 16 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+      {/* LEFT: Settings */}
+      <div>
+        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 20, color: 'var(--text-0)', marginBottom: 20 }}>Voice Settings</h2>
+
+        {/* TTS Toggle */}
+        <Card style={{ padding: 16, marginBottom: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-0)' }}>Text-to-Speech</p>
+              <p style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 2 }}>Enable AI voice for interview questions</p>
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+              <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} />
+              <span style={{ fontSize: 12, color: 'var(--text-2)' }}>{enabled ? 'On' : 'Off'}</span>
+            </label>
+          </div>
+        </Card>
+
+        {/* Provider */}
+        <Card style={{ padding: 16, marginBottom: 12 }}>
           <MonoLabel style={{ display: 'block', marginBottom: 8 }}>Provider</MonoLabel>
           <select value={provider} onChange={e => { setProvider(e.target.value); setVoice('') }} style={selectStyle}>
-            {PROVIDERS.map(p => <option key={p} value={p}>{p}</option>)}
+            {VOICE_PROVIDERS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
           </select>
-        </div>
-        <div style={{ marginBottom: 16 }}>
-          <MonoLabel style={{ display: 'block', marginBottom: 8 }}>Voice</MonoLabel>
+        </Card>
+
+        {/* Voice */}
+        <Card style={{ padding: 16, marginBottom: 12 }}>
+          <MonoLabel style={{ display: 'block', marginBottom: 8 }}>Voice ({voices.length} available)</MonoLabel>
           <select value={voice} onChange={e => setVoice(e.target.value)} style={selectStyle}>
             <option value="">Select voice...</option>
-            {(VOICES[provider] || []).map(v => <option key={v} value={v}>{v}</option>)}
+            {voices.map(v => <option key={v.id} value={v.id}>{v.label}</option>)}
           </select>
-        </div>
-      </Card>
-      <Button variant="primary" loading={save.isPending} onClick={() => save.mutate()}>
-        Save Voice Config
-      </Button>
+
+          <button onClick={() => setInterview.mutate()} disabled={!voice}
+            style={{ width: '100%', marginTop: 10, padding: '8px', background: voice ? 'var(--accent)' : 'var(--text-3)', color: '#fff', border: 'none', borderRadius: 6, fontSize: 11, fontWeight: 500, cursor: voice ? 'pointer' : 'not-allowed' }}>
+            Use in Real Interview
+          </button>
+        </Card>
+
+        <Button variant="primary" loading={save.isPending} onClick={() => save.mutate()} style={{ width: '100%' }}>
+          Save All Settings
+        </Button>
+      </div>
+
+      {/* RIGHT: TTS Playground */}
+      <div>
+        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 20, color: 'var(--text-0)', marginBottom: 20 }}>TTS Playground</h2>
+        <Card style={{ padding: 16 }}>
+          <MonoLabel style={{ display: 'block', marginBottom: 6 }}>Test text</MonoLabel>
+          <textarea value={testText} onChange={e => setTestText(e.target.value)} rows={4}
+            style={{ ...textareaStyle, marginBottom: 10 }} />
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={testVoice} disabled={!voice}
+              style={{ flex: 1, padding: '9px', background: voice ? 'var(--green, #22c55e)' : 'var(--text-3)', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: voice ? 'pointer' : 'not-allowed' }}>
+              Play Voice
+            </button>
+          </div>
+          {testStatus && (
+            <p style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 8, fontFamily: 'var(--font-mono)' }}>{testStatus}</p>
+          )}
+        </Card>
+      </div>
     </div>
   )
 }
 
-// ── Prompt Playground ─────────────────────────────────────────────────────────
+// ── Prompt Playground (full — chat mode, domain/level, fill sample) ──────────
 
 function PlaygroundTab() {
   const [prompt, setPrompt] = useState('')
   const [system, setSystem] = useState('')
   const [model, setModel] = useState('')
   const [temp, setTemp] = useState(0.3)
+  const [maxTokens, setMaxTokens] = useState(600)
   const [result, setResult] = useState<any>(null)
+  const [history, setHistory] = useState<{ role: string; content: string }[]>([])
+  const [domain, setDomain] = useState('physical_design')
+  const [level, setLevel] = useState('trained_fresher')
+  const [candidateName, setCandidateName] = useState('Sample Candidate')
 
   const { data: llmData } = useQuery({
     queryKey: ['admin-llm-config'],
@@ -709,53 +875,150 @@ function PlaygroundTab() {
       system_prompt: system || undefined,
       model_id: model || undefined,
       temperature: temp,
+      max_tokens: maxTokens,
     }),
-    onSuccess: (r) => setResult(r.data),
+    onSuccess: (r) => {
+      setResult(r.data)
+      if (r.data?.response) {
+        setHistory(h => [...h, { role: 'user', content: prompt }, { role: 'assistant', content: r.data.response }])
+      }
+    },
     onError: (e: any) => setResult({ status: 'error', error: e.message }),
   })
 
+  const fillSample = () => {
+    const d = domain.replace(/_/g, ' ')
+    const l = level.replace(/_/g, ' ')
+    setSystem(`You are a senior ${d} interviewer. Evaluate this candidate's answer strictly.`)
+    setPrompt(`CANDIDATE: ${candidateName} | ${l} | ${d}
+QUESTION: What is clock skew and why does it matter in CTS?
+ANSWER: Clock skew is when the clock arrives at different times at different flip-flops. It matters because it can cause setup and hold violations.
+
+Score this answer 0-10. Return JSON with: score, quality (strong/adequate/weak), accuracy (correct/partial/wrong), missing_points, score_reasoning.`)
+  }
+
+  const fillQgen = () => {
+    const d = domain.replace(/_/g, ' ')
+    const l = level.replace(/_/g, ' ')
+    setSystem(`You are Ranjitha, a principal VLSI design engineer conducting a technical interview. React to the answer then ask ONE follow-up question. 1-2 sentences max.`)
+    setPrompt(`DOMAIN: ${d}
+CANDIDATE: ${candidateName} | ${l}
+Topic: clock tree synthesis — clock skew definition and targets
+
+CANDIDATE ANSWER:
+Clock skew is when the clock signal arrives at different times at different flip-flops.
+
+Your question:`)
+  }
+
+  const clearChat = () => { setHistory([]); setResult(null) }
   const models = llmData?.available_models || []
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
       <div>
-        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 20, color: 'var(--text-0)', marginBottom: 20 }}>Prompt Playground</h2>
-        <Card style={{ padding: 20 }}>
-          <div style={{ marginBottom: 14 }}>
-            <MonoLabel style={{ display: 'block', marginBottom: 6 }}>System prompt (optional)</MonoLabel>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 20, color: 'var(--text-0)' }}>Prompt Playground</h2>
+        </div>
+        <Card style={{ padding: 16, marginBottom: 12 }}>
+          {/* Config row */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 12 }}>
+            <div>
+              <MonoLabel style={{ display: 'block', marginBottom: 4 }}>Domain</MonoLabel>
+              <select value={domain} onChange={e => setDomain(e.target.value)} style={{ ...selectStyle, fontSize: 11 }}>
+                <option value="physical_design">Physical Design</option>
+                <option value="analog_layout">Analog Layout</option>
+                <option value="design_verification">Design Verification</option>
+              </select>
+            </div>
+            <div>
+              <MonoLabel style={{ display: 'block', marginBottom: 4 }}>Level</MonoLabel>
+              <select value={level} onChange={e => setLevel(e.target.value)} style={{ ...selectStyle, fontSize: 11 }}>
+                <option value="fresh_graduate">Fresh Graduate</option>
+                <option value="trained_fresher">Trained Fresher</option>
+                <option value="experienced_junior">Junior (1-3y)</option>
+                <option value="experienced_senior">Senior (3+y)</option>
+              </select>
+            </div>
+            <div>
+              <MonoLabel style={{ display: 'block', marginBottom: 4 }}>Name</MonoLabel>
+              <input value={candidateName} onChange={e => setCandidateName(e.target.value)}
+                style={{ ...selectStyle, fontSize: 11 }} />
+            </div>
+          </div>
+
+          {/* Quick fill buttons */}
+          <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+            <button onClick={fillSample} style={pillBtnStyle}>Fill Evaluation Sample</button>
+            <button onClick={fillQgen} style={pillBtnStyle}>Fill Question Gen Sample</button>
+            <button onClick={clearChat} style={{ ...pillBtnStyle, color: 'var(--red, #ef4444)' }}>Clear</button>
+          </div>
+        </Card>
+
+        <Card style={{ padding: 16 }}>
+          <div style={{ marginBottom: 10 }}>
+            <MonoLabel style={{ display: 'block', marginBottom: 4 }}>System prompt</MonoLabel>
             <textarea value={system} onChange={e => setSystem(e.target.value)} rows={3}
               placeholder="e.g. You are a strict VLSI interviewer..."
-              style={{ ...textareaStyle }} />
+              style={{ ...textareaStyle, fontSize: 11 }} />
           </div>
-          <div style={{ marginBottom: 14 }}>
-            <MonoLabel style={{ display: 'block', marginBottom: 6 }}>Prompt</MonoLabel>
+          <div style={{ marginBottom: 10 }}>
+            <MonoLabel style={{ display: 'block', marginBottom: 4 }}>Prompt</MonoLabel>
             <textarea value={prompt} onChange={e => setPrompt(e.target.value)} rows={8}
-              placeholder="Enter your prompt here..."
-              style={{ ...textareaStyle }} />
+              placeholder="Enter your prompt or candidate answer..."
+              style={{ ...textareaStyle, fontSize: 11 }} />
           </div>
-          <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
             <div style={{ flex: 1 }}>
-              <MonoLabel style={{ display: 'block', marginBottom: 6 }}>Model</MonoLabel>
-              <select value={model} onChange={e => setModel(e.target.value)} style={selectStyle}>
+              <MonoLabel style={{ display: 'block', marginBottom: 4 }}>Model</MonoLabel>
+              <select value={model} onChange={e => setModel(e.target.value)} style={{ ...selectStyle, fontSize: 11 }}>
                 <option value="">Use eval model</option>
                 {models.map((m: any) => <option key={m.id} value={m.id}>{m.name}</option>)}
               </select>
             </div>
-            <div style={{ width: 100 }}>
-              <MonoLabel style={{ display: 'block', marginBottom: 6 }}>Temp</MonoLabel>
+            <div style={{ width: 70 }}>
+              <MonoLabel style={{ display: 'block', marginBottom: 4 }}>Temp</MonoLabel>
               <input type="number" value={temp} onChange={e => setTemp(Number(e.target.value))} step={0.1} min={0} max={1}
-                style={{ ...selectStyle, width: '100%' }} />
+                style={{ ...selectStyle, width: '100%', fontSize: 11 }} />
+            </div>
+            <div style={{ width: 80 }}>
+              <MonoLabel style={{ display: 'block', marginBottom: 4 }}>Tokens</MonoLabel>
+              <input type="number" value={maxTokens} onChange={e => setMaxTokens(Number(e.target.value))} step={100} min={50} max={2000}
+                style={{ ...selectStyle, width: '100%', fontSize: 11 }} />
             </div>
           </div>
           <Button variant="primary" loading={run.isPending} onClick={() => run.mutate()} style={{ width: '100%' }}>
-            Run
+            Run Prompt
           </Button>
         </Card>
       </div>
+
+      {/* RIGHT: Response + Chat History */}
       <div>
         <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 20, color: 'var(--text-0)', marginBottom: 20 }}>Response</h2>
-        <Card style={{ minHeight: 400 }}>
-          {result ? (
+        <Card style={{ minHeight: 500, maxHeight: 700, overflowY: 'auto' }}>
+          {/* Chat history */}
+          {history.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              {history.map((msg, i) => (
+                <div key={i} style={{
+                  padding: '8px 12px', marginBottom: 6, borderRadius: 8,
+                  background: msg.role === 'user' ? 'var(--bg-2)' : 'var(--bg-1)',
+                  borderLeft: `3px solid ${msg.role === 'user' ? 'var(--accent)' : 'var(--green, #22c55e)'}`,
+                }}>
+                  <MonoLabel style={{ display: 'block', marginBottom: 4, fontSize: 9 }}>
+                    {msg.role === 'user' ? 'YOU' : 'LLM'}
+                  </MonoLabel>
+                  <pre style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-1)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.5 }}>
+                    {msg.content}
+                  </pre>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Latest result */}
+          {result && !history.length ? (
             <>
               <div style={{ display: 'flex', gap: 12, marginBottom: 14, fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-3)' }}>
                 <span>{result.model}</span>
@@ -805,4 +1068,10 @@ const textareaStyle: React.CSSProperties = {
   borderRadius: 'var(--r-md)', fontSize: 12, fontFamily: 'var(--font-mono)',
   color: 'var(--text-1)', background: 'var(--bg-1)', resize: 'vertical',
   lineHeight: 1.6, outline: 'none',
+}
+
+const pillBtnStyle: React.CSSProperties = {
+  padding: '5px 10px', background: 'var(--bg-1)', border: '1px solid var(--border-2)',
+  borderRadius: 20, fontSize: 10, color: 'var(--text-2)', cursor: 'pointer',
+  fontFamily: 'var(--font-mono)',
 }
