@@ -31,9 +31,34 @@ export default function InterviewPage() {
   } = useInterview()
 
   const transcriptRef = useRef<HTMLDivElement>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
   const [domain, setDomain] = useState<string>('Interview')
+  const [permGranted, setPermGranted] = useState(false)
+  const [permError, setPermError] = useState('')
+  const [mediaStream, setMediaStream] = useState<MediaStream | null>(null)
 
-  // Fetch domain, then connect
+  // Request camera + mic permissions before starting
+  const requestPermissions = async () => {
+    try {
+      setPermError('')
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true })
+      setMediaStream(stream)
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+      }
+      setPermGranted(true)
+    } catch (err: any) {
+      if (err.name === 'NotAllowedError') {
+        setPermError('Camera and microphone access denied. Please allow permissions and try again.')
+      } else if (err.name === 'NotFoundError') {
+        setPermError('No camera or microphone found. Please connect a device.')
+      } else {
+        setPermError(`Permission error: ${err.message}`)
+      }
+    }
+  }
+
+  // Fetch domain
   useEffect(() => {
     if (!sessionId) return
     sessionApi.get(sessionId)
@@ -42,9 +67,19 @@ export default function InterviewPage() {
         setDomain(DOMAIN_LABELS[d] || d)
       })
       .catch(() => {})
-    connect(sessionId)
-    return () => disconnect()
   }, [sessionId])
+
+  // Connect only after permissions granted
+  useEffect(() => {
+    if (!sessionId || !permGranted) return
+    connect(sessionId)
+    return () => {
+      disconnect()
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(t => t.stop())
+      }
+    }
+  }, [sessionId, permGranted])
 
   // Auto-scroll
   useEffect(() => {
@@ -83,6 +118,78 @@ export default function InterviewPage() {
   const isEnded      = wsStatus === 'ended'
   const isConnecting = wsStatus === 'connecting' || wsStatus === 'reconnecting'
   const isLive       = wsStatus === 'connected'
+
+  // ── Permission gate ──
+  if (!permGranted) {
+    return (
+      <div style={{
+        minHeight: '100dvh', background: 'var(--bg-canvas)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <div style={{
+          background: 'var(--bg-0)', border: '1px solid var(--border-1)',
+          borderRadius: 16, padding: '40px 48px', maxWidth: 480, width: '100%',
+          textAlign: 'center', boxShadow: 'var(--shadow-lg)',
+        }}>
+          <div style={{
+            width: 56, height: 56, borderRadius: 14, background: 'var(--accent)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            margin: '0 auto 20px',
+          }}>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="23"/>
+            </svg>
+          </div>
+
+          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 22, color: 'var(--text-0)', marginBottom: 8 }}>
+            Before we begin
+          </h2>
+          <p style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 24, lineHeight: 1.6 }}>
+            This interview requires your camera and microphone. Your camera helps maintain interview integrity, and your microphone captures your answers.
+          </p>
+
+          {/* Camera preview */}
+          <div style={{
+            width: '100%', aspectRatio: '16/9', background: 'var(--bg-2)',
+            borderRadius: 10, overflow: 'hidden', marginBottom: 20,
+            border: '1px solid var(--border-1)',
+          }}>
+            <video
+              ref={videoRef}
+              autoPlay
+              muted
+              playsInline
+              style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }}
+            />
+          </div>
+
+          {permError && (
+            <p style={{ fontSize: 12, color: 'var(--red)', marginBottom: 16, padding: '10px 14px', background: 'var(--red-bg)', borderRadius: 8, border: '1px solid var(--red-border)' }}>
+              {permError}
+            </p>
+          )}
+
+          <button
+            onClick={requestPermissions}
+            style={{
+              width: '100%', padding: '12px 20px',
+              background: 'var(--accent)', color: '#fff', border: 'none',
+              borderRadius: 10, fontSize: 14, fontWeight: 500,
+              cursor: 'pointer', fontFamily: 'var(--font-body)',
+            }}
+          >
+            Allow Camera & Microphone
+          </button>
+
+          <p style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 12 }}>
+            {domain} Interview
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div style={{
