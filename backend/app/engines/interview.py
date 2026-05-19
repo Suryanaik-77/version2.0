@@ -222,7 +222,8 @@ async def generate_opening(session_id: str) -> AsyncIterator[str]:
 
     # Personalize opening with resume + interviewer archetype
     from app.engines.prompts import _pick_archetype
-    name = state.resume.candidate_name.split()[0] if state.resume.candidate_name != "Candidate" else ""
+    _raw_name = (state.resume.candidate_name or "").strip()
+    name = _raw_name.split()[0] if _raw_name and _raw_name != "Candidate" else ""
     archetype = _pick_archetype(session_id)
     domain_key = state.active_domain.value
 
