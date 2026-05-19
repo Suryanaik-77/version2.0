@@ -815,7 +815,7 @@ function VoiceConfigTab() {
   })
 
   const testVoice = async () => {
-    if (!testText.trim()) return
+    if (!testText.trim() || !voice) return
     setTestStatus('Generating...')
     try {
       // For Puter voices, use client-side TTS
@@ -831,7 +831,22 @@ function VoiceConfigTab() {
         audio.play()
         audio.onended = () => setTestStatus(`Done — ${Date.now() - t0}ms`)
       } else {
-        setTestStatus(`Testing ${provider}/${voice}... (server TTS not wired yet)`)
+        // Server-side TTS (OpenAI, Deepgram, Inworld)
+        const t0 = Date.now()
+        setTestStatus(`Calling ${provider} TTS (${voice})...`)
+        const res = await adminApi.testTts({ text: testText, provider, voice })
+        const d = res.data
+        if (d.status === 'success' && d.audio) {
+          const bytes = Uint8Array.from(atob(d.audio), c => c.charCodeAt(0))
+          const blob = new Blob([bytes], { type: d.format || 'audio/mpeg' })
+          const url = URL.createObjectURL(blob)
+          const audio = new Audio(url)
+          setTestStatus(`Playing (${provider}/${voice}) — ${d.latency_ms}ms`)
+          audio.onended = () => { URL.revokeObjectURL(url); setTestStatus(`Done — ${d.latency_ms}ms`) }
+          audio.play()
+        } else {
+          setTestStatus(`Error: ${d.error || 'no audio'}`)
+        }
       }
     } catch (e: any) {
       setTestStatus(`Error: ${e.message}`)

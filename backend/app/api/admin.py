@@ -685,6 +685,51 @@ async def set_voice_config(body: VoiceConfigUpdate, _: AdminUser) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# TTS Test
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TTSTestRequest(BaseModel):
+    text: str
+    provider: str = "openai"
+    voice: str = "nova"
+
+
+@router.post("/test-tts")
+async def test_tts(body: TTSTestRequest, _: AdminUser) -> dict:
+    """Test TTS: synthesize text and return base64 audio."""
+    import base64
+    import time
+
+    # Temporarily set the provider/voice in runtime config
+    await rc.set_many({"tts_provider": body.provider, "tts_voice": body.voice})
+
+    t0 = time.time()
+    try:
+        from app.providers.tts import get_tts_provider
+        tts = get_tts_provider()
+        audio_bytes = await tts.synthesize(body.text, session_id="admin-test")
+        latency_ms = int((time.time() - t0) * 1000)
+
+        if not audio_bytes or len(audio_bytes) < 100:
+            return {"status": "error", "error": "No audio generated", "latency_ms": latency_ms}
+
+        return {
+            "status": "success",
+            "audio": base64.b64encode(audio_bytes).decode(),
+            "format": tts.audio_format,
+            "latency_ms": latency_ms,
+            "provider": body.provider,
+            "voice": body.voice,
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "latency_ms": int((time.time() - t0) * 1000),
+        }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Prompt Playground
 # ══════════════════════════════════════════════════════════════════════════════
 

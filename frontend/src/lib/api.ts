@@ -147,6 +147,8 @@ export const adminApi = {
   // Voice Config
   voiceConfig:    ()              => api.get('/admin/voice-config'),
   setVoiceConfig: (d: object)    => api.post('/admin/voice-config', d),
+  // TTS Test
+  testTts:        (d: object)    => api.post('/admin/test-tts', d),
   // Prompt Playground
   playground:     (d: object)    => api.post('/admin/playground', d),
 }
