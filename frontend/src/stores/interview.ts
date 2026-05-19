@@ -120,52 +120,140 @@ function stopAudio(): void {
   _audioCtx = null
 }
 
-// ── Microphone capture ────────────────────────────────────────────────────────
+// ── Browser-side VAD + Chunked Recording ─────────────────────────────────────
+
+const SILENCE_THRESHOLD = 15
+const SILENCE_TIMEOUT = 2000
+const MAX_CHUNK_MS = 30000
 
 let _micStream: MediaStream | null = null
-let _micProcessor: ScriptProcessorNode | null = null
-let _micAudioCtx: AudioContext | null = null
+let _recorder: MediaRecorder | null = null
+let _chunks: Blob[] = []
+let _micCtx: AudioContext | null = null
+let _analyser: AnalyserNode | null = null
+let _silenceStart: number | null = null
+let _speechDetected = false
+let _recStart = 0
+let _checkTimer: number | null = null
+let _capturing = false
+let _ws: WebSocket | null = null
 
 async function startMicCapture(ws: WebSocket): Promise<void> {
-  if (!navigator.mediaDevices?.getUserMedia) return
+  if (!navigator.mediaDevices?.getUserMedia || _capturing) return
+  _capturing = true
+  _ws = ws
+
   try {
     _micStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        sampleRate: 16000,
-        channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-      }
+      audio: { echoCancellation: true, noiseSuppression: true }
     })
-    _micAudioCtx = new AudioContext({ sampleRate: 16000 })
-    const source = _micAudioCtx.createMediaStreamSource(_micStream)
-    _micProcessor = _micAudioCtx.createScriptProcessor(4096, 1, 1)
-    _micProcessor.onaudioprocess = (e: AudioProcessingEvent) => {
-      if (ws.readyState !== WebSocket.OPEN) return
-      const f32 = e.inputBuffer.getChannelData(0)
-      const pcm = new Int16Array(f32.length)
-      for (let i = 0; i < f32.length; i++) {
-        const s = Math.max(-1, Math.min(1, f32[i]))
-        pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff
-      }
-      ws.send(pcm.buffer)
-    }
-    source.connect(_micProcessor)
-    _micProcessor.connect(_micAudioCtx.destination)
+    _micCtx = new AudioContext()
+    const src = _micCtx.createMediaStreamSource(_micStream)
+    _analyser = _micCtx.createAnalyser()
+    _analyser.fftSize = 256
+    src.connect(_analyser)
+    _beginRecording()
   } catch (err) {
-    console.error('[mic] failed to start capture:', err)
+    console.error('[mic] failed:', err)
+    _capturing = false
   }
 }
 
-function stopMicCapture(): void {
+function _beginRecording(): void {
+  if (!_micStream || !_analyser || !_ws) return
+
+  _chunks = []
+  _speechDetected = false
+  _silenceStart = null
+  _recStart = Date.now()
+
   try {
-    _micProcessor?.disconnect()
-    _micAudioCtx?.close()
-    _micStream?.getTracks().forEach(t => t.stop())
-  } catch (_) {}
-  _micProcessor = null
-  _micAudioCtx = null
+    _recorder = new MediaRecorder(_micStream, { mimeType: 'audio/webm;codecs=opus' })
+  } catch {
+    _recorder = new MediaRecorder(_micStream)
+  }
+
+  _recorder.ondataavailable = (e) => {
+    if (e.data.size > 0) _chunks.push(e.data)
+  }
+
+  _recorder.onstop = () => {
+    if (_chunks.length === 0 || !_speechDetected) {
+      // No speech — restart silently
+      if (_capturing) setTimeout(_beginRecording, 50)
+      return
+    }
+    const blob = new Blob(_chunks, { type: _recorder?.mimeType || 'audio/webm' })
+    _chunks = []
+    const dur = Date.now() - _recStart
+
+    // Send as base64 via WS text
+    const reader = new FileReader()
+    reader.onloadend = () => {
+      if (_ws && _ws.readyState === WebSocket.OPEN && reader.result) {
+        const b64 = (reader.result as string).split(',')[1]
+        _ws.send(JSON.stringify({
+          type: 'AUDIO_BLOB',
+          audio: b64,
+          format: 'webm',
+          duration_ms: dur,
+          is_final: !_capturing,
+        }))
+      }
+      // Restart recording immediately
+      if (_capturing) setTimeout(_beginRecording, 50)
+    }
+    reader.readAsDataURL(blob)
+  }
+
+  _recorder.start(500)
+
+  // Silence detection
+  const buf = new Uint8Array(_analyser.frequencyBinCount)
+  if (_checkTimer) clearInterval(_checkTimer)
+  _checkTimer = window.setInterval(() => {
+    if (!_analyser || !_recorder || _recorder.state !== 'recording') return
+
+    _analyser.getByteFrequencyData(buf)
+    const avg = buf.reduce((a, b) => a + b, 0) / buf.length
+    const elapsed = Date.now() - _recStart
+
+    if (avg >= SILENCE_THRESHOLD) {
+      _speechDetected = true
+      _silenceStart = null
+      useInterview.setState({ audioState: 'listening' })
+    } else if (_speechDetected) {
+      if (!_silenceStart) {
+        _silenceStart = Date.now()
+      } else if (Date.now() - _silenceStart >= SILENCE_TIMEOUT) {
+        // 2s silence after speech → send
+        useInterview.setState({ audioState: 'thinking' })
+        try { _recorder.stop() } catch {}
+        if (_checkTimer) { clearInterval(_checkTimer); _checkTimer = null }
+        return
+      }
+    }
+
+    // 30s auto-send
+    if (elapsed >= MAX_CHUNK_MS && _speechDetected) {
+      useInterview.setState({ audioState: 'thinking' })
+      try { _recorder.stop() } catch {}
+      if (_checkTimer) { clearInterval(_checkTimer); _checkTimer = null }
+    }
+  }, 100)
+}
+
+function stopMicCapture(): void {
+  _capturing = false
+  if (_checkTimer) { clearInterval(_checkTimer); _checkTimer = null }
+  try { if (_recorder && _recorder.state !== 'inactive') _recorder.stop() } catch {}
+  try { _micCtx?.close() } catch {}
+  try { _micStream?.getTracks().forEach(t => t.stop()) } catch {}
+  _recorder = null
+  _micCtx = null
   _micStream = null
+  _analyser = null
+  _ws = null
 }
 
 // ── Store ─────────────────────────────────────────────────────────────────────

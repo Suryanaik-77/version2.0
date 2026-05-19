@@ -493,6 +493,13 @@ async def _handle_text_message(
         # Relay barge-in event to confirm interruption
         await r.publish_event(session_id, barge_in_event(session_id).to_json())
 
+    elif event_type == "AUDIO_BLOB":
+        # Browser-side VAD sent complete audio blob as base64
+        asyncio.create_task(
+            _handle_audio_blob(session_id, data),
+            name=f"audio_blob_{session_id}",
+        )
+
     elif event_type == WSEventType.SESSION_END and is_admin:
         asyncio.create_task(
             _handle_admin_end_session(session_id),
@@ -501,6 +508,111 @@ async def _handle_text_message(
 
     else:
         log.debug("ws.unknown_event_type", session_id=session_id, event_type=event_type)
+
+
+# ── Audio blob handler (browser-side VAD) ─────────────────────────────────────
+
+# Accumulated transcripts per session (for multi-chunk answers)
+_transcript_accum: dict[str, list[str]] = {}
+_turn_counters: dict[str, int] = {}
+
+
+async def _handle_audio_blob(session_id: str, data: dict) -> None:
+    """
+    Handle complete audio blob from browser-side VAD.
+    Decodes base64, transcribes via STT, accumulates chunks,
+    then launches voice pipeline when silence-triggered (is_final).
+    """
+    import base64
+
+    audio_b64 = data.get("audio", "")
+    audio_format = data.get("format", "webm")
+    duration_ms = data.get("duration_ms", 0)
+    is_final = data.get("is_final", True)
+
+    if not audio_b64:
+        return
+
+    audio_bytes = base64.b64decode(audio_b64)
+    log.info("ws.audio_blob", session_id=session_id, bytes=len(audio_bytes),
+             duration_ms=duration_ms, format=audio_format)
+
+    # Transcribe
+    from app.providers.stt import get_stt_provider
+    stt = get_stt_provider()
+
+    # STT expects wav/webm — pass raw bytes with format hint
+    transcript = await _transcribe_blob(stt, audio_bytes, audio_format, session_id)
+
+    if not transcript:
+        log.warning("ws.blob_empty_transcript", session_id=session_id)
+        return
+
+    # Accumulate
+    if session_id not in _transcript_accum:
+        _transcript_accum[session_id] = []
+    _transcript_accum[session_id].append(transcript)
+
+    log.info("ws.blob_transcribed", session_id=session_id, chars=len(transcript),
+             chunk_count=len(_transcript_accum[session_id]),
+             preview=transcript[:80])
+
+    # Emit STT event to frontend
+    from app.models.events import stt_final_event
+    turn_num = _turn_counters.get(session_id, 0) + 1
+    _turn_counters[session_id] = turn_num
+    combined = " ".join(_transcript_accum[session_id])
+    stt_event = stt_final_event(session_id, combined, duration_ms, turn_num)
+    await hub.publish_to_session(session_id, stt_event.to_json())
+
+    # Always trigger pipeline (browser sends when silence detected or 30s reached)
+    full_transcript = " ".join(_transcript_accum.pop(session_id, []))
+    if full_transcript:
+        from app.voice.pipeline import run_turn_pipeline
+        pipeline_task = asyncio.create_task(
+            run_turn_pipeline(
+                session_id=session_id,
+                transcript=full_transcript,
+                turn_number=turn_num,
+                ws_hub=hub,
+            ),
+            name=f"pipeline_{session_id}_{turn_num}",
+        )
+        hub.register_stream(session_id, pipeline_task)
+
+
+async def _transcribe_blob(stt, audio_bytes: bytes, fmt: str, session_id: str) -> str:
+    """Transcribe audio blob. Handles webm/wav formats."""
+    import io
+    import time
+
+    t0 = time.monotonic()
+    try:
+        # Create file-like object with correct name for OpenAI
+        audio_file = io.BytesIO(audio_bytes)
+        audio_file.name = f"audio.{fmt}"
+
+        from openai import AsyncOpenAI
+        from app.config import get_settings
+        settings = get_settings()
+        client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+
+        response = await asyncio.wait_for(
+            client.audio.transcriptions.create(
+                model="gpt-4o-mini-transcribe",
+                file=audio_file,
+                language="en",
+                response_format="text",
+            ),
+            timeout=5.0,
+        )
+        transcript = str(response).strip()
+        elapsed = int((time.monotonic() - t0) * 1000)
+        log.info("stt.blob_done", session_id=session_id, chars=len(transcript), latency_ms=elapsed)
+        return transcript
+    except Exception as exc:
+        log.error("stt.blob_error", session_id=session_id, error=str(exc))
+        return ""
 
 
 async def _handle_admin_end_session(session_id: str) -> None:
