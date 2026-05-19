@@ -32,7 +32,7 @@ import structlog
 from app.config import get_settings
 from app.core import redis as r
 from app.engines import memory as mem
-from app.engines.prompts import QUESTION_SYSTEM, build_question_prompt
+from app.engines.prompts import QUESTION_SYSTEM, build_question_prompt, get_system_prompt
 from app.models.session import (
     InlineSignals,
     TurnContext,
@@ -100,10 +100,10 @@ async def stream(
     t_start = time.monotonic()
 
     try:
-        # Check for admin-activated prompt override (Redis-cached, 30s TTL).
-        # Falls back to module-level QUESTION_SYSTEM if no override is active.
+        # Per-session interviewer personality (deterministic from session_id)
+        # Admin override takes priority if set.
         from app.core.prompt_cache import get_live_system_prompt
-        active_system = await get_live_system_prompt("question_system") or QUESTION_SYSTEM
+        active_system = await get_live_system_prompt("question_system") or get_system_prompt(ctx.session_id)
 
         async for token in stream_generate(
             system=active_system,
