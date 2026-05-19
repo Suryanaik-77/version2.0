@@ -1,0 +1,11 @@
+.env
+
+#python
+__pycache__/
+*.pyc
+
+#node
+noe_modules/
+
+#vite
+dist/

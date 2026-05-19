@@ -25,7 +25,7 @@ from sqlalchemy.sql import func
 
 
 def _uuid():
-    return str(uuid.uuid4())
+    return uuid.uuid4()
 
 
 class Base(DeclarativeBase):
@@ -39,7 +39,7 @@ class Base(DeclarativeBase):
 class User(Base):
     __tablename__ = "users"
 
-    id              = Column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    id              = Column(UUID(as_uuid=True), primary_key=True, default=_uuid)
     email           = Column(String(255), nullable=False, unique=True, index=True)
     hashed_password = Column(String(255), nullable=False)
     full_name       = Column(String(255), nullable=True)
@@ -68,8 +68,8 @@ class User(Base):
 class RefreshToken(Base):
     __tablename__ = "refresh_tokens"
 
-    id          = Column(UUID(as_uuid=False), primary_key=True, default=_uuid)
-    user_id     = Column(UUID(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"),
+    id          = Column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    user_id     = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
                          nullable=False, index=True)
     token_hash  = Column(String(128), nullable=False, unique=True, index=True)
     device_hint = Column(String(255), nullable=True)   # "Chrome/macOS" etc.
@@ -89,8 +89,8 @@ class RefreshToken(Base):
 class PasswordResetToken(Base):
     __tablename__ = "password_reset_tokens"
 
-    id          = Column(UUID(as_uuid=False), primary_key=True, default=_uuid)
-    user_id     = Column(UUID(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"),
+    id          = Column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    user_id     = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
                          nullable=False)
     token_hash  = Column(String(128), nullable=False, unique=True, index=True)
     created_at  = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -105,8 +105,8 @@ class PasswordResetToken(Base):
 class InterviewSession(Base):
     __tablename__ = "interview_sessions"
 
-    id              = Column(UUID(as_uuid=False), primary_key=True, default=_uuid)
-    candidate_id    = Column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=False)
+    id              = Column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    candidate_id    = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     domain          = Column(String(64), nullable=False)
     status          = Column(
         SAEnum("pending", "active", "completed", "terminated", "error",
@@ -162,8 +162,8 @@ class InterviewSession(Base):
 class InterviewTurn(Base):
     __tablename__ = "interview_turns"
 
-    id                  = Column(UUID(as_uuid=False), primary_key=True, default=_uuid)
-    session_id          = Column(UUID(as_uuid=False),
+    id                  = Column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    session_id          = Column(UUID(as_uuid=True),
                                  ForeignKey("interview_sessions.id", ondelete="CASCADE"),
                                  nullable=False, index=True)
     turn_number         = Column(Integer, nullable=False)
@@ -213,8 +213,8 @@ class InterviewTurn(Base):
 class SessionReport(Base):
     __tablename__ = "session_reports"
 
-    id              = Column(UUID(as_uuid=False), primary_key=True, default=_uuid)
-    session_id      = Column(UUID(as_uuid=False),
+    id              = Column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    session_id      = Column(UUID(as_uuid=True),
                              ForeignKey("interview_sessions.id", ondelete="CASCADE"),
                              nullable=False, unique=True, index=True)
 
@@ -245,7 +245,7 @@ class SessionReport(Base):
     review_status       = Column(
         SAEnum("pending", "in_review", "reviewed", "approved", name="review_status"),
         nullable=False, default="pending")
-    reviewed_by_id      = Column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=True)
+    reviewed_by_id      = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     reviewed_at         = Column(DateTime(timezone=True), nullable=True)
     reviewer_override   = Column(JSON, nullable=True)  # override scores if any
 
@@ -268,11 +268,11 @@ class SessionReport(Base):
 class ReviewerNote(Base):
     __tablename__ = "reviewer_notes"
 
-    id              = Column(UUID(as_uuid=False), primary_key=True, default=_uuid)
-    session_id      = Column(UUID(as_uuid=False),
+    id              = Column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    session_id      = Column(UUID(as_uuid=True),
                              ForeignKey("interview_sessions.id", ondelete="CASCADE"),
                              nullable=False, index=True)
-    reviewer_id     = Column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=False)
+    reviewer_id     = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     turn_number     = Column(Integer, nullable=True)   # null = session-level note
     note_text       = Column(Text, nullable=False)
     note_type       = Column(
@@ -294,11 +294,11 @@ class ReviewerNote(Base):
 class SessionFlag(Base):
     __tablename__ = "session_flags"
 
-    id              = Column(UUID(as_uuid=False), primary_key=True, default=_uuid)
-    session_id      = Column(UUID(as_uuid=False),
+    id              = Column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    session_id      = Column(UUID(as_uuid=True),
                              ForeignKey("interview_sessions.id", ondelete="CASCADE"),
                              nullable=False, index=True)
-    flagged_by_id   = Column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=False)
+    flagged_by_id   = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     flag_type       = Column(String(64), nullable=False)  # "integrity", "quality", "technical"
     reason          = Column(Text, nullable=False)
     resolved        = Column(Boolean, nullable=False, default=False)
@@ -313,8 +313,8 @@ class SessionFlag(Base):
 class IntegrityRecord(Base):
     __tablename__ = "integrity_records"
 
-    id                      = Column(UUID(as_uuid=False), primary_key=True, default=_uuid)
-    session_id              = Column(UUID(as_uuid=False),
+    id                      = Column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    session_id              = Column(UUID(as_uuid=True),
                                      ForeignKey("interview_sessions.id", ondelete="CASCADE"),
                                      nullable=False, unique=True, index=True)
 
@@ -339,7 +339,7 @@ class IntegrityRecord(Base):
 
     # Flags
     requires_review         = Column(Boolean, nullable=False, default=False)
-    reviewed_by_id          = Column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=True)
+    reviewed_by_id          = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     reviewer_verdict        = Column(String(32), nullable=True)  # clean/suspicious/inconclusive
 
     created_at              = Column(DateTime(timezone=True), server_default=func.now(),
@@ -361,8 +361,8 @@ class OperationalMetric(Base):
     """
     __tablename__ = "operational_metrics"
 
-    id              = Column(UUID(as_uuid=False), primary_key=True, default=_uuid)
-    session_id      = Column(UUID(as_uuid=False), nullable=True, index=True)  # null = system metric
+    id              = Column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    session_id      = Column(UUID(as_uuid=True), nullable=True, index=True)  # null = system metric
     turn_number     = Column(Integer, nullable=True)
     metric_type     = Column(String(64), nullable=False, index=True)
     value_ms        = Column(Integer, nullable=True)   # for latency
@@ -385,8 +385,8 @@ class SystemEvent(Base):
     """
     __tablename__ = "system_events"
 
-    id          = Column(UUID(as_uuid=False), primary_key=True, default=_uuid)
-    session_id  = Column(UUID(as_uuid=False), nullable=True, index=True)
+    id          = Column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    session_id  = Column(UUID(as_uuid=True), nullable=True, index=True)
     event_type  = Column(String(64), nullable=False, index=True)
     severity    = Column(String(16), nullable=False, default="info")  # debug/info/warn/error
     message     = Column(Text, nullable=True)
@@ -407,13 +407,13 @@ class SystemEvent(Base):
 class PromptVersion(Base):
     __tablename__ = "prompt_versions"
 
-    id              = Column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    id              = Column(UUID(as_uuid=True), primary_key=True, default=_uuid)
     name            = Column(String(128), nullable=False)
     prompt_type     = Column(String(64), nullable=False)  # "question_system", "eval_system"
     content         = Column(Text, nullable=False)
     version_number  = Column(Integer, nullable=False)
     is_active       = Column(Boolean, nullable=False, default=False)
-    created_by_id   = Column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=False)
+    created_by_id   = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     created_at      = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     notes           = Column(Text, nullable=True)
 
