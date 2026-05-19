@@ -322,7 +322,8 @@ export const useInterview = create<InterviewState>((set, get) => ({
 
     socket.onmessage = (event: MessageEvent) => {
       if (event.data instanceof ArrayBuffer) {
-        // Binary frame = TTS audio chunk
+        // Binary frame = TTS audio chunk — stop mic immediately
+        stopListening()
         enqueueAudio(event.data)
         set({ audioState: 'speaking' })
         return
@@ -422,9 +423,9 @@ function handleMessage(msg: Record<string, unknown>) {
   switch (msg.type) {
 
     case 'TURN_START':
+      stopListening()  // Stop mic immediately — AI is about to speak
       store.setAudioState('thinking')
       if (p.mode) store.setMode(p.mode as InterviewMode)
-      // Clear previous question for new turn
       useInterview.setState({ currentQuestion: '', transcript: '' })
       break
 
