@@ -53,6 +53,8 @@ class UserRole(str, Enum):
 
 class ResumeData(BaseModel):
     """Parsed resume data — extracted at session creation."""
+    model_config = {"extra": "ignore"}
+
     candidate_name: str = "Candidate"
     domain: str = "physical_design"
     level: str = "trained_fresher"
@@ -61,6 +63,20 @@ class ResumeData(BaseModel):
     tools: list[str] = Field(default_factory=list)
     key_projects: list[str] = Field(default_factory=list)
     education: str = ""
+
+    @classmethod
+    def _coerce_list(cls, v):
+        if isinstance(v, dict):
+            return list(v.values()) if v else []
+        if not isinstance(v, list):
+            return []
+        return v
+
+    def __init__(self, **data):
+        for f in ("skills", "tools", "key_projects"):
+            if f in data and not isinstance(data[f], list):
+                data[f] = self._coerce_list(data[f])
+        super().__init__(**data)
 
 
 class SessionState(BaseModel):
