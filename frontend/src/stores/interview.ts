@@ -313,14 +313,14 @@ function handleMessage(msg: Record<string, unknown>) {
       break
 
     case 'TURN_COMPLETE':
-      // question text = accumulated currentQuestion; answer = last STT_FINAL transcript
+      // Save turn to history and clear current question
       store.finishTurn({
         turnNumber: p.turn_number ?? store.turnNumber + 1,
         question:   store.currentQuestion,
         answer:     store.transcript,
         mode:       store.mode,
       })
-      store.setAudioState('silence')
+      useInterview.setState({ currentQuestion: '', audioState: 'silence' })
       break
 
     case 'STT_PARTIAL':
