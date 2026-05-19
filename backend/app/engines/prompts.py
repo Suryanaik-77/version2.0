@@ -331,11 +331,11 @@ def build_question_prompt(
         elif level == "experienced_senior" or (years and float(years) > 3):
             seniority_block = "SENIORITY: Senior (3+ years). Expect depth, numbers, trade-offs, failure stories. No tolerance for surface-level answers."
 
-    # Anti-repetition — last 2 questions only
+    # Anti-repetition — last 5 questions
     avoid_block = ""
     if recent_questions:
         avoid_block = "\nDO NOT ask a question similar to these recent ones:\n" + \
-                      "\n".join(f"- {q}" for q in recent_questions[-2:])
+                      "\n".join(f"- {q}" for q in recent_questions[-5:])
 
     # Assemble — blocks that are empty strings contribute nothing
     blocks = filter(None, [

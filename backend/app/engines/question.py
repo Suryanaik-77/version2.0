@@ -83,7 +83,9 @@ async def stream(
 
     # Build prompt — pure CPU work, < 1ms
     memory_context = mem.compress_for_injection(ctx.memory)
-    recent_qs = _get_recent_questions(ctx)
+    recent_qs = await _get_recent_questions_from_redis(ctx.session_id)
+    if not recent_qs:
+        recent_qs = _get_recent_questions(ctx)  # fallback
     prompt = build_question_prompt(
         mode=ctx.mode,
         domain=ctx.domain,
@@ -165,23 +167,20 @@ async def stream(
         )
 
     finally:
-        # Always store the generated question for memory/repetition tracking
+        # Store question IMMEDIATELY (not background) so next turn sees it
         if accumulated:
             question_text = "".join(accumulated).strip()
+            try:
+                await _store_generated_question(ctx.session_id, ctx.turn_number, question_text)
+                await _update_topic_coverage(ctx.session_id, chosen_topic)
+            except Exception as e:
+                log.warning("question.store_failed", error=str(e))
+            # Context update can be background
             asyncio.create_task(
                 r.set_session_context(
                     (await r.get_session_context(ctx.session_id) or _dummy_context(ctx))
                 ),
                 name=f"ctx_update_{ctx.session_id}",
-            )
-            asyncio.create_task(
-                _store_generated_question(ctx.session_id, ctx.turn_number, question_text),
-                name=f"store_q_{ctx.session_id}_{ctx.turn_number}",
-            )
-            # Update topic coverage in memory (non-blocking)
-            asyncio.create_task(
-                _update_topic_coverage(ctx.session_id, chosen_topic),
-                name=f"topic_cov_{ctx.session_id}_{ctx.turn_number}",
             )
 
 
@@ -281,8 +280,17 @@ async def _store_generated_question(session_id: str, turn_number: int, question:
     })
 
 
+async def _get_recent_questions_from_redis(session_id: str) -> list[str]:
+    """Read recent questions directly from Redis turn history."""
+    try:
+        turns = await r.get_recent_turns(session_id, n=5)
+        return [t.get("question", "") for t in turns if t.get("question")]
+    except Exception:
+        return []
+
+
 def _get_recent_questions(ctx: TurnContext) -> list[str]:
-    """Extract recent questions from prior answers."""
+    """Extract recent questions from prior answers (fallback)."""
     return [a for a in ctx.prior_answers if a] if ctx.prior_answers else []
 
 
