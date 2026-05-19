@@ -582,15 +582,43 @@ async def _handle_audio_blob(session_id: str, data: dict) -> None:
 
 
 async def _transcribe_blob(stt, audio_bytes: bytes, fmt: str, session_id: str) -> str:
-    """Transcribe audio blob. Handles webm/wav formats."""
+    """Transcribe audio blob. Converts webm to wav first for OpenAI compatibility."""
     import io
     import time
+    import subprocess
+    import tempfile
+    import os
 
     t0 = time.monotonic()
     try:
-        # Create file-like object with correct name for OpenAI
-        audio_file = io.BytesIO(audio_bytes)
-        audio_file.name = f"audio.{fmt}"
+        # Convert webm to wav using ffmpeg (OpenAI needs wav/mp3/m4a, not webm)
+        if fmt == "webm":
+            with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp_in:
+                tmp_in.write(audio_bytes)
+                tmp_in_path = tmp_in.name
+
+            tmp_out_path = tmp_in_path.replace(".webm", ".wav")
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "ffmpeg", "-i", tmp_in_path, "-ar", "16000", "-ac", "1",
+                    "-f", "wav", tmp_out_path, "-y", "-loglevel", "error",
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                )
+                await asyncio.wait_for(proc.wait(), timeout=5.0)
+
+                with open(tmp_out_path, "rb") as f:
+                    wav_bytes = f.read()
+            finally:
+                try: os.unlink(tmp_in_path)
+                except: pass
+                try: os.unlink(tmp_out_path)
+                except: pass
+
+            audio_file = io.BytesIO(wav_bytes)
+            audio_file.name = "audio.wav"
+        else:
+            audio_file = io.BytesIO(audio_bytes)
+            audio_file.name = f"audio.{fmt}"
 
         from openai import AsyncOpenAI
         from app.config import get_settings
@@ -604,7 +632,7 @@ async def _transcribe_blob(stt, audio_bytes: bytes, fmt: str, session_id: str) -
                 language="en",
                 response_format="text",
             ),
-            timeout=5.0,
+            timeout=10.0,
         )
         transcript = str(response).strip()
         elapsed = int((time.monotonic() - t0) * 1000)
