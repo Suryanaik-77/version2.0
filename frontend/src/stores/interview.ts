@@ -136,13 +136,13 @@ let _speechDetected = false
 let _recStart = 0
 let _checkTimer: number | null = null
 let _capturing = false
+let _recording = false
 let _ws: WebSocket | null = null
 
-async function startMicCapture(ws: WebSocket): Promise<void> {
-  if (!navigator.mediaDevices?.getUserMedia || _capturing) return
-  _capturing = true
+async function _initMicStream(ws: WebSocket): Promise<void> {
+  if (!navigator.mediaDevices?.getUserMedia) return
   _ws = ws
-
+  _capturing = true
   try {
     _micStream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true }
@@ -152,10 +152,30 @@ async function startMicCapture(ws: WebSocket): Promise<void> {
     _analyser = _micCtx.createAnalyser()
     _analyser.fftSize = 256
     src.connect(_analyser)
-    _beginRecording()
+    // Don't start recording — wait for startListening()
   } catch (err) {
-    console.error('[mic] failed:', err)
+    console.error('[mic] init failed:', err)
     _capturing = false
+  }
+}
+
+function startListening(): void {
+  // Called AFTER AI finishes speaking — start recording candidate
+  if (!_capturing || !_micStream || !_analyser || !_ws || _recording) return
+  _recording = true
+  useInterview.setState({ audioState: 'listening' })
+  _beginRecording()
+}
+
+function stopListening(): void {
+  // Called WHEN AI starts speaking — stop recording
+  _recording = false
+  if (_checkTimer) { clearInterval(_checkTimer); _checkTimer = null }
+  if (_recorder && _recorder.state === 'recording') {
+    // Discard current recording (it's AI voice or noise)
+    _chunks = []
+    _speechDetected = false
+    try { _recorder.stop() } catch {}
   }
 }
 
@@ -184,20 +204,17 @@ function _beginRecording(): void {
   }
 
   _recorder.onstop = () => {
-    if (_chunks.length === 0 || !_speechDetected) {
-      // No speech — restart silently
-      if (_capturing) setTimeout(_beginRecording, 50)
+    if (_chunks.length === 0 || !_speechDetected || !_recording) {
+      // No speech or AI speaking — discard
+      _chunks = []
       return
     }
-    const actualMime = _recorder?.mimeType || 'audio/webm'
-    const blob = new Blob(_chunks, { type: actualMime })
+    const blob = new Blob(_chunks, { type: 'audio/webm' })
     _chunks = []
     const dur = Date.now() - _recStart
 
-    // Determine format extension for backend
-    const fmt = actualMime.includes('mp4') ? 'mp4' : actualMime.includes('webm') ? 'webm' : 'webm'
+    useInterview.setState({ audioState: 'thinking' })
 
-    // Send as base64 via WS text
     const reader = new FileReader()
     reader.onloadend = () => {
       if (_ws && _ws.readyState === WebSocket.OPEN && reader.result) {
@@ -205,13 +222,12 @@ function _beginRecording(): void {
         _ws.send(JSON.stringify({
           type: 'AUDIO_BLOB',
           audio: b64,
-          format: fmt,
+          format: 'webm',
           duration_ms: dur,
-          is_final: !_capturing,
         }))
       }
-      // Restart recording immediately
-      if (_capturing) setTimeout(_beginRecording, 50)
+      // Restart only if still listening (30s chunk → keep recording)
+      if (_recording) setTimeout(_beginRecording, 50)
     }
     reader.readAsDataURL(blob)
   }
@@ -251,20 +267,6 @@ function _beginRecording(): void {
       if (_checkTimer) { clearInterval(_checkTimer); _checkTimer = null }
     }
   }, 100)
-}
-
-function pauseMicCapture(): void {
-  // Stop current recording but keep stream alive
-  if (_checkTimer) { clearInterval(_checkTimer); _checkTimer = null }
-  try { if (_recorder && _recorder.state === 'recording') _recorder.stop() } catch {}
-  _speechDetected = false
-  _silenceStart = null
-}
-
-function resumeMicCapture(): void {
-  // Restart recording on existing stream
-  if (!_capturing || !_micStream || !_analyser || !_ws) return
-  _beginRecording()
 }
 
 function stopMicCapture(): void {
@@ -313,7 +315,9 @@ export const useInterview = create<InterviewState>((set, get) => ({
     socket.onopen = () => {
       set({ wsStatus: 'connected', reconnectAttempt: 0, ws: socket })
       socket.send(JSON.stringify({ type: 'HEARTBEAT' }))
-      startMicCapture(socket)
+      // Don't start recording here — wait for AI to finish speaking first
+      // Just init the mic stream so it's ready
+      _initMicStream(socket)
     }
 
     socket.onmessage = (event: MessageEvent) => {
@@ -452,13 +456,13 @@ function handleMessage(msg: Record<string, unknown>) {
         useInterview.setState({ currentQuestion: p.text })
       }
       store.setAudioState('speaking')
-      pauseMicCapture()  // Stop recording while AI speaks
+      stopListening()  // Stop recording while AI speaks
       break
 
     case 'INTERVIEWER_DONE':
-      // All audio sent. Resume mic after audio finishes playing.
-      // Delay to let audio queue drain before resuming
-      setTimeout(() => resumeMicCapture(), 500)
+      // All audio sent. Start listening after audio plays out.
+      // Delay to let audio queue drain before starting mic
+      setTimeout(() => startListening(), 1000)
       break
 
     case 'SESSION_START':
