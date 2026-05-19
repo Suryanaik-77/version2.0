@@ -100,8 +100,7 @@ export const useAuth = create<AuthState>((set, get) => ({
       await api.post('/auth/logout')
     } catch (_) {}
     delete api.defaults.headers.common['Authorization']
-    set({ user: null, accessToken: null })
-    window.location.href = '/login'
+    set({ user: null, accessToken: null, isInitialized: true })
   },
 
   refresh: async () => {

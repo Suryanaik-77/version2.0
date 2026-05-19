@@ -57,7 +57,6 @@ api.interceptors.response.use(
       return Promise.reject(error)
     }
     if (original.url?.includes('/auth/refresh') || original.url?.includes('/auth/login')) {
-      useAuth.getState().logout()
       return Promise.reject(error)
     }
 
