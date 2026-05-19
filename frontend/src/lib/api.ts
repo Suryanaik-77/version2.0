@@ -105,7 +105,7 @@ export const authApi = {
 
 export const sessionApi = {
   // candidate_id comes from JWT on backend — only domain needed in body
-  create: (domain: string) => api.post('/sessions', { domain }),
+  create: (domain: string, resume_text?: string) => api.post('/sessions', { domain, resume_text: resume_text || '' }),
   // GET /sessions — list of completed sessions for the authenticated candidate
   list:   () => api.get('/sessions'),
   // GET /sessions/{id} — live Redis state (for InterviewPage to read domain)
