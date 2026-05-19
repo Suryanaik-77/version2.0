@@ -80,7 +80,14 @@ export default function App() {
           <Route path="/register"        element={<RequireGuest><RegisterPage /></RequireGuest>} />
           <Route path="/forgot-password" element={<RequireGuest><ForgotPasswordPage /></RequireGuest>} />
 
-          {/* Interview — full-screen */}
+          {/* Interview — full-screen (with or without session ID) */}
+          <Route path="/interview" element={
+            <RequireAuth role="candidate">
+              <ErrorBoundary>
+                <InterviewPage />
+              </ErrorBoundary>
+            </RequireAuth>
+          } />
           <Route path="/interview/:sessionId" element={
             <RequireAuth role="candidate">
               <ErrorBoundary>

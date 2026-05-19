@@ -20,8 +20,11 @@ const DOMAIN_LABELS: Record<string, string> = {
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────────
+type Stage = 'setup' | 'permissions' | 'interview'
+type DomainKey = 'ANALOG_LAYOUT' | 'PHYSICAL_DESIGN' | 'DESIGN_VERIFICATION'
+
 export default function InterviewPage() {
-  const { sessionId } = useParams<{ sessionId: string }>()
+  const { sessionId: urlSessionId } = useParams<{ sessionId: string }>()
   const navigate = useNavigate()
   const { user } = useAuth()
   const {
@@ -32,12 +35,51 @@ export default function InterviewPage() {
 
   const transcriptRef = useRef<HTMLDivElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
+
+  // Stage management
+  const [stage, setStage] = useState<Stage>(urlSessionId ? 'permissions' : 'setup')
+  const [sessionId, setSessionId] = useState<string>(urlSessionId || '')
+
+  // Setup stage state
+  const [resumeText, setResumeText] = useState('')
+  const [resumeFile, setResumeFile] = useState<File | null>(null)
+  const [resumeLoading, setResumeLoading] = useState(false)
+  const [selectedDomain, setSelectedDomain] = useState<DomainKey>('PHYSICAL_DESIGN')
+  const [creating, setCreating] = useState(false)
+
+  // Permission stage state
   const [domain, setDomain] = useState<string>('Interview')
   const [permGranted, setPermGranted] = useState(false)
   const [permError, setPermError] = useState('')
   const [mediaStream, setMediaStream] = useState<MediaStream | null>(null)
 
-  // Request camera + mic permissions before starting
+  const handleResumeFile = async (file: File) => {
+    setResumeFile(file)
+    setResumeLoading(true)
+    try {
+      const text = await file.text()
+      setResumeText(text)
+    } catch { }
+    setResumeLoading(false)
+  }
+
+  const handleCreateSession = async () => {
+    if (!resumeText) return
+    setCreating(true)
+    try {
+      const res = await sessionApi.create(selectedDomain, resumeText)
+      const sid = res.data?.session_id || res.data?.id
+      if (sid) {
+        setSessionId(sid)
+        setDomain(DOMAIN_LABELS[selectedDomain] || selectedDomain)
+        setStage('permissions')
+      }
+    } catch {
+      alert('Failed to create session. Please try again.')
+    }
+    setCreating(false)
+  }
+
   const requestPermissions = async () => {
     try {
       setPermError('')
@@ -47,6 +89,7 @@ export default function InterviewPage() {
         videoRef.current.srcObject = stream
       }
       setPermGranted(true)
+      setStage('interview')
     } catch (err: any) {
       if (err.name === 'NotAllowedError') {
         setPermError('Camera and microphone access denied. Please allow permissions and try again.')
@@ -58,20 +101,21 @@ export default function InterviewPage() {
     }
   }
 
-  // Fetch domain
+  // If landed with sessionId in URL, fetch domain
   useEffect(() => {
-    if (!sessionId) return
-    sessionApi.get(sessionId)
-      .then(res => {
-        const d = res.data?.domain || 'ANALOG_LAYOUT'
-        setDomain(DOMAIN_LABELS[d] || d)
-      })
-      .catch(() => {})
-  }, [sessionId])
+    if (urlSessionId) {
+      sessionApi.get(urlSessionId)
+        .then(res => {
+          const d = res.data?.domain || 'ANALOG_LAYOUT'
+          setDomain(DOMAIN_LABELS[d] || d)
+        })
+        .catch(() => {})
+    }
+  }, [urlSessionId])
 
-  // Connect only after permissions granted
+  // Connect only after permissions granted + interview stage
   useEffect(() => {
-    if (!sessionId || !permGranted) return
+    if (!sessionId || stage !== 'interview') return
     connect(sessionId)
     return () => {
       disconnect()
@@ -79,7 +123,7 @@ export default function InterviewPage() {
         mediaStream.getTracks().forEach(t => t.stop())
       }
     }
-  }, [sessionId, permGranted])
+  }, [sessionId, stage])
 
   // Auto-scroll
   useEffect(() => {
@@ -119,8 +163,14 @@ export default function InterviewPage() {
   const isConnecting = wsStatus === 'connecting' || wsStatus === 'reconnecting'
   const isLive       = wsStatus === 'connected'
 
-  // ── Permission gate ──
-  if (!permGranted) {
+  const DOMAIN_OPTIONS: { key: DomainKey; label: string; desc: string }[] = [
+    { key: 'PHYSICAL_DESIGN', label: 'Physical Design', desc: 'Floorplan, CTS, timing closure, routing' },
+    { key: 'ANALOG_LAYOUT', label: 'Analog Layout', desc: 'Device matching, parasitics, DRC/LVS' },
+    { key: 'DESIGN_VERIFICATION', label: 'Design Verification', desc: 'UVM, coverage, formal, SVA' },
+  ]
+
+  // ── Stage 1: Setup (resume + domain) ──
+  if (stage === 'setup') {
     return (
       <div style={{
         minHeight: '100dvh', background: 'var(--bg-canvas)',
@@ -128,29 +178,134 @@ export default function InterviewPage() {
       }}>
         <div style={{
           background: 'var(--bg-0)', border: '1px solid var(--border-1)',
-          borderRadius: 16, padding: '40px 48px', maxWidth: 480, width: '100%',
+          borderRadius: 16, padding: '40px 48px', maxWidth: 520, width: '100%',
+          boxShadow: 'var(--shadow-lg)',
+        }}>
+          {/* Step indicator */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 28 }}>
+            <div style={{ flex: 1, height: 3, borderRadius: 2, background: 'var(--accent)' }} />
+            <div style={{ flex: 1, height: 3, borderRadius: 2, background: 'var(--border-1)' }} />
+          </div>
+
+          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 24, color: 'var(--text-0)', marginBottom: 6 }}>
+            Interview Setup
+          </h2>
+          <p style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 24 }}>
+            Upload your resume and select a domain. The interviewer will personalize questions based on your experience.
+          </p>
+
+          {/* Resume upload */}
+          <label style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: '24px', border: '2px dashed var(--border-2)', borderRadius: 12,
+            cursor: 'pointer', marginBottom: 20,
+            background: resumeText ? 'rgba(34,197,94,0.05)' : 'var(--bg-1)',
+            borderColor: resumeText ? 'rgba(34,197,94,0.3)' : 'var(--border-2)',
+          }}>
+            <input
+              type="file"
+              accept=".txt,.pdf,.doc,.docx"
+              style={{ display: 'none' }}
+              onChange={e => e.target.files?.[0] && handleResumeFile(e.target.files[0])}
+            />
+            {resumeLoading ? (
+              <span style={{ fontSize: 13, color: 'var(--text-2)' }}>Reading file...</span>
+            ) : resumeText ? (
+              <span style={{ fontSize: 13, color: 'var(--green, #22c55e)' }}>
+                {resumeFile?.name} ({Math.round(resumeText.length / 1024)}KB)
+              </span>
+            ) : (
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 28, marginBottom: 6 }}>📄</div>
+                <span style={{ fontSize: 13, color: 'var(--text-3)' }}>Drop resume here or click to upload</span>
+              </div>
+            )}
+          </label>
+
+          {/* Domain selection */}
+          <div style={{ marginBottom: 24 }}>
+            <p style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 8, fontFamily: 'var(--font-mono)', letterSpacing: '0.05em', textTransform: 'uppercase' }}>Domain</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {DOMAIN_OPTIONS.map(d => (
+                <button
+                  key={d.key}
+                  onClick={() => setSelectedDomain(d.key)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    padding: '12px 16px', border: '1px solid',
+                    borderColor: selectedDomain === d.key ? 'var(--accent)' : 'var(--border-1)',
+                    background: selectedDomain === d.key ? 'rgba(99,102,241,0.05)' : 'var(--bg-1)',
+                    borderRadius: 10, cursor: 'pointer', textAlign: 'left',
+                    fontFamily: 'var(--font-body)',
+                  }}
+                >
+                  <div style={{
+                    width: 16, height: 16, borderRadius: '50%', flexShrink: 0,
+                    border: `2px solid ${selectedDomain === d.key ? 'var(--accent)' : 'var(--border-2)'}`,
+                    background: selectedDomain === d.key ? 'var(--accent)' : 'transparent',
+                  }} />
+                  <div>
+                    <p style={{ fontSize: 13, color: 'var(--text-0)', fontWeight: 500 }}>{d.label}</p>
+                    <p style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 1 }}>{d.desc}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <button
+            disabled={!resumeText || creating}
+            onClick={handleCreateSession}
+            style={{
+              width: '100%', padding: '13px 20px',
+              background: (!resumeText || creating) ? 'var(--text-3)' : 'var(--accent)',
+              color: '#fff', border: 'none', borderRadius: 10,
+              fontSize: 14, fontWeight: 500, cursor: (!resumeText || creating) ? 'not-allowed' : 'pointer',
+              fontFamily: 'var(--font-body)',
+            }}
+          >
+            {creating ? 'Creating session...' : !resumeText ? 'Upload resume to continue' : 'Next — Camera & Mic'}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Stage 2: Permissions (camera + mic) ──
+  if (stage === 'permissions') {
+    return (
+      <div style={{
+        minHeight: '100dvh', background: 'var(--bg-canvas)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <div style={{
+          background: 'var(--bg-0)', border: '1px solid var(--border-1)',
+          borderRadius: 16, padding: '40px 48px', maxWidth: 520, width: '100%',
           textAlign: 'center', boxShadow: 'var(--shadow-lg)',
         }}>
+          {/* Step indicator */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 28 }}>
+            <div style={{ flex: 1, height: 3, borderRadius: 2, background: 'var(--accent)' }} />
+            <div style={{ flex: 1, height: 3, borderRadius: 2, background: 'var(--accent)' }} />
+          </div>
+
           <div style={{
             width: 56, height: 56, borderRadius: 14, background: 'var(--accent)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             margin: '0 auto 20px',
           }}>
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
-              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
-              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-              <line x1="12" y1="19" x2="12" y2="23"/>
+              <path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
             </svg>
           </div>
 
           <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 22, color: 'var(--text-0)', marginBottom: 8 }}>
-            Before we begin
+            Camera & Microphone
           </h2>
           <p style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 24, lineHeight: 1.6 }}>
-            This interview requires your camera and microphone. Your camera helps maintain interview integrity, and your microphone captures your answers.
+            Your camera maintains interview integrity. Your microphone captures your answers. Both are required.
           </p>
 
-          {/* Camera preview */}
           <div style={{
             width: '100%', aspectRatio: '16/9', background: 'var(--bg-2)',
             borderRadius: 10, overflow: 'hidden', marginBottom: 20,
@@ -166,7 +321,7 @@ export default function InterviewPage() {
           </div>
 
           {permError && (
-            <p style={{ fontSize: 12, color: 'var(--red)', marginBottom: 16, padding: '10px 14px', background: 'var(--red-bg)', borderRadius: 8, border: '1px solid var(--red-border)' }}>
+            <p style={{ fontSize: 12, color: 'var(--red, #ef4444)', marginBottom: 16, padding: '10px 14px', background: 'rgba(239,68,68,0.05)', borderRadius: 8, border: '1px solid rgba(239,68,68,0.2)' }}>
               {permError}
             </p>
           )}
@@ -174,13 +329,13 @@ export default function InterviewPage() {
           <button
             onClick={requestPermissions}
             style={{
-              width: '100%', padding: '12px 20px',
+              width: '100%', padding: '13px 20px',
               background: 'var(--accent)', color: '#fff', border: 'none',
               borderRadius: 10, fontSize: 14, fontWeight: 500,
               cursor: 'pointer', fontFamily: 'var(--font-body)',
             }}
           >
-            Allow Camera & Microphone
+            Allow & Start Interview
           </button>
 
           <p style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 12 }}>
@@ -190,6 +345,8 @@ export default function InterviewPage() {
       </div>
     )
   }
+
+  // ── Stage 3: Interview ──
 
   return (
     <div style={{
