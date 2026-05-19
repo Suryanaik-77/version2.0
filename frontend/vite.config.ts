@@ -13,13 +13,13 @@ export default defineConfig({
     proxy: {
       // Dev proxy — routes frontend calls to local backend
       // Note: /api/* proxy removed — frontend never calls /api/*
-      '/auth':      { target: 'http://localhost:8000', changeOrigin: true },
-      '/sessions':  { target: 'http://localhost:8000', changeOrigin: true },
-      '/admin':     { target: 'http://localhost:8000', changeOrigin: true },
-      '/reviewer':  { target: 'http://localhost:8000', changeOrigin: true },
-      '/integrity': { target: 'http://localhost:8000', changeOrigin: true },
-      '/health':    { target: 'http://localhost:8000', changeOrigin: true },
-      '/ws':        { target: 'ws://localhost:8000', ws: true, changeOrigin: true },
+      '/auth':       { target: 'http://localhost:8000', changeOrigin: true },
+      '/sessions':   { target: 'http://localhost:8000', changeOrigin: true },
+      '/admin/':     { target: 'http://localhost:8000', changeOrigin: true },
+      '/reviewer/':  { target: 'http://localhost:8000', changeOrigin: true },
+      '/integrity':  { target: 'http://localhost:8000', changeOrigin: true },
+      '/health':     { target: 'http://localhost:8000', changeOrigin: true },
+      '/ws':         { target: 'ws://localhost:8000', ws: true, changeOrigin: true },
     },
   },
   build: {
