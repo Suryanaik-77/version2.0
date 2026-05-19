@@ -582,65 +582,52 @@ async def _handle_audio_blob(session_id: str, data: dict) -> None:
 
 
 async def _transcribe_blob(stt, audio_bytes: bytes, fmt: str, session_id: str) -> str:
-    """Transcribe audio blob. Converts webm to wav first for OpenAI compatibility."""
-    import io
+    """Transcribe audio blob. Same approach as monolith — save to temp file, send directly."""
     import time
-    import subprocess
     import tempfile
     import os
 
+    if len(audio_bytes) < 1000:
+        return ""
+
     t0 = time.monotonic()
+    tmp_path = None
     try:
-        # Convert webm to wav using ffmpeg (OpenAI needs wav/mp3/m4a, not webm)
-        if fmt == "webm":
-            with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp_in:
-                tmp_in.write(audio_bytes)
-                tmp_in_path = tmp_in.name
+        # Save to temp file with correct extension (same as monolith)
+        with tempfile.NamedTemporaryFile(suffix=f".{fmt}", delete=False) as f:
+            f.write(audio_bytes)
+            tmp_path = f.name
 
-            tmp_out_path = tmp_in_path.replace(".webm", ".wav")
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    "ffmpeg", "-i", tmp_in_path, "-ar", "16000", "-ac", "1",
-                    "-f", "wav", tmp_out_path, "-y", "-loglevel", "error",
-                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-                )
-                await asyncio.wait_for(proc.wait(), timeout=5.0)
-
-                with open(tmp_out_path, "rb") as f:
-                    wav_bytes = f.read()
-            finally:
-                try: os.unlink(tmp_in_path)
-                except: pass
-                try: os.unlink(tmp_out_path)
-                except: pass
-
-            audio_file = io.BytesIO(wav_bytes)
-            audio_file.name = "audio.wav"
-        else:
-            audio_file = io.BytesIO(audio_bytes)
-            audio_file.name = f"audio.{fmt}"
-
-        from openai import AsyncOpenAI
+        # Use sync OpenAI client in executor (same as monolith)
+        from openai import OpenAI
         from app.config import get_settings
         settings = get_settings()
-        client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+        client = OpenAI(api_key=settings.OPENAI_API_KEY)
 
-        response = await asyncio.wait_for(
-            client.audio.transcriptions.create(
-                model="gpt-4o-mini-transcribe",
-                file=audio_file,
-                language="en",
-                response_format="text",
-            ),
+        def _sync_transcribe():
+            with open(tmp_path, "rb") as audio_file:
+                response = client.audio.transcriptions.create(
+                    model="gpt-4o-mini-transcribe",
+                    file=audio_file,
+                    language="en",
+                )
+            return response.text.strip() if hasattr(response, "text") else str(response).strip()
+
+        loop = asyncio.get_event_loop()
+        transcript = await asyncio.wait_for(
+            loop.run_in_executor(None, _sync_transcribe),
             timeout=10.0,
         )
-        transcript = str(response).strip()
         elapsed = int((time.monotonic() - t0) * 1000)
         log.info("stt.blob_done", session_id=session_id, chars=len(transcript), latency_ms=elapsed)
         return transcript
     except Exception as exc:
         log.error("stt.blob_error", session_id=session_id, error=str(exc))
         return ""
+    finally:
+        if tmp_path:
+            try: os.unlink(tmp_path)
+            except: pass
 
 
 async def _handle_admin_end_session(session_id: str) -> None:
