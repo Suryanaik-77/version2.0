@@ -42,7 +42,7 @@ async def health() -> dict:
 
 class CreateSessionRequest(BaseModel):
     domain: VLSIDomain
-    # candidate_id is taken from the auth token — not the request body
+    resume_text: str = ""  # raw resume text from frontend upload
 
 
 class CreateSessionResponse(BaseModel):
@@ -61,9 +61,16 @@ async def create_session_endpoint(
     Create a new interview session for the authenticated candidate.
     Returns session_id and the WebSocket URL to connect to.
     """
+    # Parse resume if provided
+    resume_data = None
+    if body.resume_text:
+        from app.engines.resume_parser import parse_resume
+        resume_data = await parse_resume(body.resume_text, body.domain.value)
+
     state = await create_session(
         candidate_id=user.sub,
         domain=body.domain,
+        resume_data=resume_data,
     )
 
     # Construct WS URL — client appends ?token= from their stored access token

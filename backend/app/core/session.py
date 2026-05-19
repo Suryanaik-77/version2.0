@@ -34,6 +34,7 @@ settings = get_settings()
 async def create_session(
     candidate_id: str,
     domain: VLSIDomain,
+    resume_data: dict | None = None,
 ) -> SessionState:
     """
     Creates a new session in Redis AND creates a pending row in Postgres.
@@ -43,7 +44,10 @@ async def create_session(
 
     Latency: ~2 Redis writes + 1 async DB write = ~5-10ms
     """
+    from app.models.session import ResumeData
     session_id = str(uuid.uuid4())
+
+    resume = ResumeData(**(resume_data or {}))
 
     state = SessionState(
         session_id=session_id,
@@ -51,6 +55,7 @@ async def create_session(
         active_domain=domain,
         mode=InterviewerMode.PROBING,
         phase=SessionPhase.WARMUP,
+        resume=resume,
     )
 
     memory = CandidateMemory(session_id=session_id)

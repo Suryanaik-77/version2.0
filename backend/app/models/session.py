@@ -51,6 +51,18 @@ class UserRole(str, Enum):
 
 # ── Session state (lives in Redis) ────────────────────────────────────────────
 
+class ResumeData(BaseModel):
+    """Parsed resume data — extracted at session creation."""
+    candidate_name: str = "Candidate"
+    domain: str = "physical_design"
+    level: str = "trained_fresher"
+    years_experience: float = 0
+    skills: list[str] = Field(default_factory=list)
+    tools: list[str] = Field(default_factory=list)
+    key_projects: list[str] = Field(default_factory=list)
+    education: str = ""
+
+
 class SessionState(BaseModel):
     """Live session state. Owned exclusively by interview_engine via Redis."""
     session_id: str
@@ -59,6 +71,7 @@ class SessionState(BaseModel):
     active_domain: VLSIDomain = VLSIDomain.ANALOG_LAYOUT
     phase: SessionPhase = SessionPhase.WARMUP
     candidate_id: str
+    resume: ResumeData = Field(default_factory=ResumeData)
     started_at: datetime = Field(default_factory=datetime.utcnow)
     last_turn_at: datetime | None = None
     is_active: bool = True
