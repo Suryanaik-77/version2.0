@@ -167,12 +167,10 @@ function _beginRecording(): void {
   _silenceStart = null
   _recStart = Date.now()
 
-  // Try formats OpenAI accepts directly (no conversion needed)
-  const mimeTypes = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm']
-  let mimeType = ''
-  for (const mt of mimeTypes) {
-    if (MediaRecorder.isTypeSupported(mt)) { mimeType = mt; break }
-  }
+  // Use webm — same as monolith, OpenAI accepts it directly
+  const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+    ? 'audio/webm;codecs=opus'
+    : 'audio/webm'
   try {
     _recorder = mimeType
       ? new MediaRecorder(_micStream, { mimeType })
