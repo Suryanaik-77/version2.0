@@ -73,6 +73,7 @@ async def run_async_eval(
                 max_tokens=100,
                 temperature=0.1,
                 session_id=session_id,
+                use_eval_model=True,
             ),
             timeout=settings.EVAL_ASYNC_DEADLINE_MS / 1000,
         )

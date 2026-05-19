@@ -84,6 +84,7 @@ async def stream_generate(
     temperature: float = 0.72,
     session_id: str = "",
     turn_number: int = 0,
+    model_override: str = "",
 ) -> AsyncIterator[str]:
     """
     Stream tokens from LLM. First token must arrive within FIRST_TOKEN_DEADLINE_MS.
@@ -98,6 +99,10 @@ async def stream_generate(
     """
     await _check_circuit("openai")
 
+    # Read admin-selected model from runtime config
+    from app.core.runtime_config import get as rc_get
+    model = model_override or rc_get("qgen_model", "") or settings.OPENAI_MODEL
+
     client = get_client()
     t_start = time.monotonic()
     first_token_received = False
@@ -106,7 +111,7 @@ async def stream_generate(
     try:
         stream = await asyncio.wait_for(
             client.chat.completions.create(
-                model=settings.OPENAI_MODEL,
+                model=model,
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user",   "content": prompt},
@@ -166,11 +171,18 @@ async def generate(
     max_tokens: int = 512,
     temperature: float = 0.3,
     session_id: str = "",
+    use_eval_model: bool = False,
 ) -> str:
     """
     Non-streaming generation. Used ONLY by eval_engine (async, off hot-path).
     Never called from question generation.
     """
+    # Eval uses eval_model from admin config
+    model = ""
+    if use_eval_model:
+        from app.core.runtime_config import get as rc_get
+        model = rc_get("eval_model", "") or settings.OPENAI_MODEL
+
     tokens: list[str] = []
     async for token in stream_generate(
         system=system,
@@ -178,6 +190,7 @@ async def generate(
         max_tokens=max_tokens,
         temperature=temperature,
         session_id=session_id,
+        model_override=model,
     ):
         tokens.append(token)
     return "".join(tokens)
