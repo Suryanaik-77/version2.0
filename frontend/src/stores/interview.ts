@@ -167,8 +167,16 @@ function _beginRecording(): void {
   _silenceStart = null
   _recStart = Date.now()
 
+  // Try formats OpenAI accepts directly (no conversion needed)
+  const mimeTypes = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm']
+  let mimeType = ''
+  for (const mt of mimeTypes) {
+    if (MediaRecorder.isTypeSupported(mt)) { mimeType = mt; break }
+  }
   try {
-    _recorder = new MediaRecorder(_micStream, { mimeType: 'audio/webm;codecs=opus' })
+    _recorder = mimeType
+      ? new MediaRecorder(_micStream, { mimeType })
+      : new MediaRecorder(_micStream)
   } catch {
     _recorder = new MediaRecorder(_micStream)
   }
@@ -183,9 +191,13 @@ function _beginRecording(): void {
       if (_capturing) setTimeout(_beginRecording, 50)
       return
     }
-    const blob = new Blob(_chunks, { type: _recorder?.mimeType || 'audio/webm' })
+    const actualMime = _recorder?.mimeType || 'audio/webm'
+    const blob = new Blob(_chunks, { type: actualMime })
     _chunks = []
     const dur = Date.now() - _recStart
+
+    // Determine format extension for backend
+    const fmt = actualMime.includes('mp4') ? 'mp4' : actualMime.includes('webm') ? 'webm' : 'webm'
 
     // Send as base64 via WS text
     const reader = new FileReader()
@@ -195,7 +207,7 @@ function _beginRecording(): void {
         _ws.send(JSON.stringify({
           type: 'AUDIO_BLOB',
           audio: b64,
-          format: 'webm',
+          format: fmt,
           duration_ms: dur,
           is_final: !_capturing,
         }))
