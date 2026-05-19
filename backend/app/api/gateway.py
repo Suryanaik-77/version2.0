@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import desc, select
 
+from fastapi import File, UploadFile, Form
 from app.api.auth import TokenPayload, get_current_user, require_admin
 from app.config import get_settings
 from app.core.session import create_session, get_session, end_session, SessionNotFoundError
@@ -42,13 +43,67 @@ async def health() -> dict:
 
 class CreateSessionRequest(BaseModel):
     domain: VLSIDomain
-    resume_text: str = ""  # raw resume text from frontend upload
+    resume_text: str = ""
 
 
 class CreateSessionResponse(BaseModel):
     session_id: str
     ws_url: str
     domain: str
+
+
+async def _extract_pdf_text(file_bytes: bytes) -> str:
+    """Extract text from PDF bytes using pypdf."""
+    try:
+        import io
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(file_bytes))
+        text = ""
+        for page in reader.pages:
+            text += (page.extract_text() or "") + "\n"
+        return text.strip()
+    except Exception:
+        return ""
+
+
+@router.post("/sessions/upload", response_model=CreateSessionResponse, status_code=201)
+async def create_session_with_upload(
+    request: Request,
+    domain: str = Form(...),
+    resume: UploadFile = File(...),
+    user: Annotated[TokenPayload, Depends(get_current_user)] = None,
+) -> CreateSessionResponse:
+    """Create session with PDF resume upload."""
+    file_bytes = await resume.read()
+
+    # Extract text based on file type
+    filename = (resume.filename or "").lower()
+    if filename.endswith(".pdf"):
+        resume_text = await _extract_pdf_text(file_bytes)
+    else:
+        resume_text = file_bytes.decode("utf-8", errors="ignore")
+
+    # Parse resume
+    resume_data = None
+    if resume_text and len(resume_text.strip()) > 20:
+        from app.engines.resume_parser import parse_resume
+        resume_data = await parse_resume(resume_text, domain)
+
+    vlsi_domain = VLSIDomain(domain)
+    state = await create_session(
+        candidate_id=user.sub,
+        domain=vlsi_domain,
+        resume_data=resume_data,
+    )
+
+    base_url = str(request.base_url).rstrip("/").replace("http://", "ws://").replace("https://", "wss://")
+    ws_url = f"{base_url}/ws/{state.session_id}"
+
+    return CreateSessionResponse(
+        session_id=state.session_id,
+        ws_url=ws_url,
+        domain=state.active_domain.value,
+    )
 
 
 @router.post("/sessions", response_model=CreateSessionResponse, status_code=201)
@@ -58,10 +113,8 @@ async def create_session_endpoint(
     user: Annotated[TokenPayload, Depends(get_current_user)],
 ) -> CreateSessionResponse:
     """
-    Create a new interview session for the authenticated candidate.
-    Returns session_id and the WebSocket URL to connect to.
+    Create a new interview session with text resume.
     """
-    # Parse resume if provided
     resume_data = None
     if body.resume_text:
         from app.engines.resume_parser import parse_resume

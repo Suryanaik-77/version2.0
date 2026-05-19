@@ -56,18 +56,29 @@ export default function InterviewPage() {
   const handleResumeFile = async (file: File) => {
     setResumeFile(file)
     setResumeLoading(true)
-    try {
-      const text = await file.text()
-      setResumeText(text)
-    } catch { }
+    // For PDF, don't try to read as text — backend will extract
+    if (file.name.toLowerCase().endsWith('.pdf')) {
+      setResumeText('(PDF uploaded)')
+    } else {
+      try {
+        const text = await file.text()
+        setResumeText(text)
+      } catch { }
+    }
     setResumeLoading(false)
   }
 
   const handleCreateSession = async () => {
-    if (!resumeText) return
+    if (!resumeFile && !resumeText) return
     setCreating(true)
     try {
-      const res = await sessionApi.create(selectedDomain, resumeText)
+      let res
+      if (resumeFile) {
+        // Upload file directly — backend extracts PDF text
+        res = await sessionApi.createWithFile(selectedDomain, resumeFile)
+      } else {
+        res = await sessionApi.create(selectedDomain, resumeText)
+      }
       const sid = res.data?.session_id || res.data?.id
       if (sid) {
         setSessionId(sid)
