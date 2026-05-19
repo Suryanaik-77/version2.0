@@ -272,21 +272,25 @@ async def _send_opening(session_id: str, connection_id: str) -> None:
     try:
         from app.engines.interview import generate_opening
         from app.providers.tts import get_tts_provider
-        from app.models.events import interviewer_chunk_event, interviewer_done_event
+        from app.models.events import WSEvent, WSEventType
 
         # Generate opening text
         opening_text = ""
         async for token in generate_opening(session_id):
             opening_text += token
 
-        # Send text to client
-        chunk_event = interviewer_chunk_event(session_id, opening_text)
-        await hub.send_to_connection(connection_id, chunk_event.to_json())
+        if not opening_text:
+            return
 
-        done_event = interviewer_done_event(session_id, opening_text)
-        await hub.send_to_connection(connection_id, done_event.to_json())
+        # Send question text to client
+        text_event = WSEvent(
+            type=WSEventType.INTERVIEWER_CHUNK,
+            session_id=session_id,
+            payload={"text": opening_text, "sentence_index": 0, "is_final": True},
+        )
+        await hub.send_to_connection(connection_id, text_event.to_json())
 
-        # Synthesize and send audio
+        # Synthesize and send audio as binary frame
         tts = get_tts_provider()
         audio_bytes = await tts.synthesize(opening_text, session_id=session_id)
         if audio_bytes and len(audio_bytes) > 100:
@@ -294,9 +298,17 @@ async def _send_opening(session_id: str, connection_id: str) -> None:
             if ws:
                 await ws.send_bytes(audio_bytes)
 
+        # Send done event
+        done_event = WSEvent(
+            type=WSEventType.INTERVIEWER_DONE,
+            session_id=session_id,
+            payload={"sentence_count": 1},
+        )
+        await hub.send_to_connection(connection_id, done_event.to_json())
+
         log.info("ws.opening_sent", session_id=session_id, chars=len(opening_text))
     except Exception as exc:
-        log.error("ws.opening_failed", session_id=session_id, error=str(exc))
+        log.error("ws.opening_failed", session_id=session_id, error=str(exc), exc_info=exc)
 
 
 async def _receive_loop(

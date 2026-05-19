@@ -333,7 +333,10 @@ function handleMessage(msg: Record<string, unknown>) {
 
     case 'INTERVIEWER_CHUNK':
       // Audio bytes arrive as binary frame (handled in onmessage above)
-      // This JSON frame is just metadata
+      // This JSON frame carries metadata + question text
+      if (p.text) {
+        store.appendToken(p.text)
+      }
       store.setAudioState('speaking')
       break
 
