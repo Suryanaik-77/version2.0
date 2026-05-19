@@ -203,12 +203,29 @@ class SilenceTTS:
 
 def get_tts_provider() -> TTSProvider:
     """
-    Returns configured TTS provider.
-    To swap: change TTS_PROVIDER env var (Phase 5 adds config routing).
-    Currently: OpenAI TTS if API key present, else SilenceTTS.
+    Returns configured TTS provider based on admin Voice Config.
+    Reads from runtime_config (Redis) — changes take effect immediately.
     """
+    from app.core.runtime_config import get
+
+    # Check if TTS is disabled
+    if not get("tts_enabled", True):
+        return SilenceTTS()
+
+    provider = get("tts_provider", "openai")
+    voice = get("tts_voice", "")
+
+    if provider == "openai" and settings.OPENAI_API_KEY:
+        tts = OpenAITTS()
+        if voice:
+            tts._voice = voice  # override default 'nova' with admin-selected voice
+        return tts
+
+    # Deepgram, Inworld, Puter — not yet implemented server-side
+    # Fall back to OpenAI if available
     if settings.OPENAI_API_KEY:
         return OpenAITTS()
+
     return SilenceTTS()
 
 
