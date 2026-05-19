@@ -243,6 +243,20 @@ function _beginRecording(): void {
   }, 100)
 }
 
+function pauseMicCapture(): void {
+  // Stop current recording but keep stream alive
+  if (_checkTimer) { clearInterval(_checkTimer); _checkTimer = null }
+  try { if (_recorder && _recorder.state === 'recording') _recorder.stop() } catch {}
+  _speechDetected = false
+  _silenceStart = null
+}
+
+function resumeMicCapture(): void {
+  // Restart recording on existing stream
+  if (!_capturing || !_micStream || !_analyser || !_ws) return
+  _beginRecording()
+}
+
 function stopMicCapture(): void {
   _capturing = false
   if (_checkTimer) { clearInterval(_checkTimer); _checkTimer = null }
@@ -428,10 +442,13 @@ function handleMessage(msg: Record<string, unknown>) {
         useInterview.setState({ currentQuestion: p.text })
       }
       store.setAudioState('speaking')
+      pauseMicCapture()  // Stop recording while AI speaks
       break
 
     case 'INTERVIEWER_DONE':
-      // All audio sent. Don't clear question — let TURN_START of next turn do that.
+      // All audio sent. Resume mic after audio finishes playing.
+      // Delay to let audio queue drain before resuming
+      setTimeout(() => resumeMicCapture(), 500)
       break
 
     case 'SESSION_START':
