@@ -55,9 +55,9 @@ def issue_token(
     expire = datetime.utcnow() + timedelta(minutes=exp_minutes)
     
     payload = {
-        "sub": user_id,
+        "sub": str(user_id),
         "role": role.value,
-        "session_id": session_id,
+        "session_id": str(session_id) if session_id else None,
         "exp": expire,
         "iat": datetime.utcnow(),
         "jti": str(uuid.uuid4()),

@@ -190,16 +190,16 @@ async def register(
     db.add(user)
     await db.flush()
 
-    access = issue_token(user_id=user.id, role=UserRole(user.role))
+    access = issue_token(user_id=str(user.id), role=UserRole(user.role))
     refresh_raw = await _issue_refresh_token(db, user.id, request)
     _set_refresh_cookie(response, refresh_raw)
 
-    log.info("auth.register", user_id=user.id, email=user.email, role=user.role)
+    log.info("auth.register", user_id=str(user.id), email=user.email, role=user.role)
 
     return AuthResponse(
         access_token=access.access_token,
         expires_in=access.expires_in,
-        user_id=user.id,
+        user_id=str(user.id),
         role=user.role,
         full_name=user.full_name,
     )
@@ -221,16 +221,16 @@ async def login(
 
     user.last_login_at = datetime.utcnow()
 
-    access = issue_token(user_id=user.id, role=UserRole(user.role))
+    access = issue_token(user_id=str(user.id), role=UserRole(user.role))
     refresh_raw = await _issue_refresh_token(db, user.id, request)
     _set_refresh_cookie(response, refresh_raw)
 
-    log.info("auth.login", user_id=user.id, role=user.role)
+    log.info("auth.login", user_id=str(user.id), role=user.role)
 
     return AuthResponse(
         access_token=access.access_token,
         expires_in=access.expires_in,
-        user_id=user.id,
+        user_id=str(user.id),
         role=user.role,
         full_name=user.full_name,
     )
@@ -282,14 +282,14 @@ async def refresh_token(
         raise HTTPException(status_code=403, detail="Account unavailable")
 
     # Issue new pair
-    access = issue_token(user_id=user.id, role=UserRole(user.role))
+    access = issue_token(user_id=str(user.id), role=UserRole(user.role))
     new_refresh_raw = await _issue_refresh_token(db, user.id, request)
     _set_refresh_cookie(response, new_refresh_raw)
 
     return AuthResponse(
         access_token=access.access_token,
         expires_in=access.expires_in,
-        user_id=user.id,
+        user_id=str(user.id),
         role=user.role,
         full_name=user.full_name,
     )
@@ -324,7 +324,7 @@ async def me(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return UserResponse(
-        id=user.id,
+        id=str(user.id),
         email=user.email,
         full_name=user.full_name,
         role=user.role,
@@ -346,13 +346,13 @@ async def forgot_password(
     if user:
         raw = secrets.token_urlsafe(32)
         prt = PasswordResetToken(
-            user_id=user.id,
+            user_id=str(user.id),
             token_hash=_hash_token(raw),
             expires_at=datetime.utcnow() + timedelta(hours=1),
         )
         db.add(prt)
         # TODO: send email via background task
-        log.info("auth.forgot_password", user_id=user.id, token_prefix=raw[:8])
+        log.info("auth.forgot_password", user_id=str(user.id), token_prefix=raw[:8])
 
     return {"message": "If that email exists, a reset link has been sent"}
 
@@ -420,7 +420,7 @@ async def admin_create_user(
              new_user=user.id, role=user.role)
 
     return UserResponse(
-        id=user.id,
+        id=str(user.id),
         email=user.email,
         full_name=user.full_name,
         role=user.role,
