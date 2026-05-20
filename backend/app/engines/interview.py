@@ -227,27 +227,14 @@ async def generate_opening(session_id: str) -> AsyncIterator[str]:
     archetype = _pick_archetype(session_id)
     domain_key = state.active_domain.value
 
-    # Each archetype opens differently
+    # Warm opening — NO technical questions. Just greet and ask for self-intro.
     _OPENINGS = {
-        "ranjitha": {
-            "ANALOG_LAYOUT": f"{'Hi ' + name + ', ' if name else ''}let's get started. Walk me through the most complex analog layout you've personally designed — matching strategy and why.",
-            "PHYSICAL_DESIGN": f"{'Hi ' + name + ', ' if name else ''}let's get into it. Last physical design you owned — what was the hardest timing closure challenge?",
-            "DESIGN_VERIFICATION": f"{'Hi ' + name + ', ' if name else ''}let's go. Most complex verification environment you've built — coverage model and how you closed it.",
-        },
-        "vikram": {
-            "ANALOG_LAYOUT": f"{'Hello ' + name + ', ' if name else ''}I'd like to understand your background. Tell me about an analog block you laid out end to end — what were the critical matching requirements?",
-            "PHYSICAL_DESIGN": f"{'Hello ' + name + ', ' if name else ''}let's start with your experience. Walk me through a chip you worked on — from floorplan to signoff, what was the most interesting challenge?",
-            "DESIGN_VERIFICATION": f"{'Hello ' + name + ', ' if name else ''}take me through a testbench you built from scratch. What was the DUT, and how did you approach coverage?",
-        },
-        "priya": {
-            "ANALOG_LAYOUT": f"{'Hi ' + name + '! ' if name else ''}So, tell me about your analog layout experience — pick a project you're proud of and walk me through the challenges.",
-            "PHYSICAL_DESIGN": f"{'Hi ' + name + '! ' if name else ''}I'd love to hear about your PD work. Pick a block or chip and tell me what made it tricky.",
-            "DESIGN_VERIFICATION": f"{'Hi ' + name + '! ' if name else ''}Let's dive in. Tell me about a verification challenge that really tested you — what was the bug and how did you find it?",
-        },
+        "ranjitha": f"{'Good morning ' + name + '. ' if name else 'Good morning. '}Let's start with a quick introduction — tell me about yourself and what you've been working on recently.",
+        "vikram": f"{'Hello ' + name + '. ' if name else 'Hello. '}Could you walk me through your background briefly?",
+        "priya": f"{'Hi ' + name + '! ' if name else 'Hi! '}Thanks for joining. Tell me a bit about yourself and your experience.",
     }
 
-    archetype_openings = _OPENINGS.get(archetype, _OPENINGS["ranjitha"])
-    opening = archetype_openings.get(domain_key, f"{'Hi ' + name + ', ' if name else ''}tell me about the most technically challenging project you've worked on.")
+    opening = _OPENINGS.get(archetype, _OPENINGS["ranjitha"])
 
     # Stream character by character for natural feel
     # (In Phase 3 this goes to TTS — for now yield as single token)

@@ -94,6 +94,7 @@ async def stream(
         recent_questions=recent_qs,
         resume=ctx.resume.model_dump() if ctx.resume else None,
         topic_hint=f"Topic: {chosen_topic.replace('_', ' ')} — {concept.description}",
+        turn_number=ctx.turn_number,
     )
 
     # Debug: log what the LLM actually sees
