@@ -53,17 +53,25 @@ class CreateSessionResponse(BaseModel):
 
 
 async def _extract_pdf_text(file_bytes: bytes) -> str:
-    """Extract text from PDF bytes using pypdf."""
+    """Extract text from PDF bytes using pdfplumber — same as monolith."""
+    import tempfile, os
+    tmp_path = None
     try:
-        import io
-        from pypdf import PdfReader
-        reader = PdfReader(io.BytesIO(file_bytes))
+        import pdfplumber
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            tmp.write(file_bytes)
+            tmp_path = tmp.name
         text = ""
-        for page in reader.pages:
-            text += (page.extract_text() or "") + "\n"
+        with pdfplumber.open(tmp_path) as pdf:
+            for page in pdf.pages:
+                text += (page.extract_text() or "") + "\n"
         return text.strip()
     except Exception:
         return ""
+    finally:
+        if tmp_path:
+            try: os.unlink(tmp_path)
+            except: pass
 
 
 @router.post("/sessions/upload", response_model=CreateSessionResponse, status_code=201)
