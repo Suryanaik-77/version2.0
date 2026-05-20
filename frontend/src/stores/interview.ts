@@ -109,8 +109,9 @@ async function _drainAudioQueue(): Promise<void> {
     }
   }
   _isPlaying = false
-  // All audio drained — tell store we're done speaking
+  // All audio played — NOW start listening for candidate
   useInterview.setState({ audioState: 'silence' })
+  startListening()
 }
 
 function stopAudio(): void {
@@ -461,9 +462,8 @@ function handleMessage(msg: Record<string, unknown>) {
       break
 
     case 'INTERVIEWER_DONE':
-      // All audio sent. Start listening after audio plays out.
-      // Delay to let audio queue drain before starting mic
-      setTimeout(() => startListening(), 1000)
+      // Audio sent to queue — don't start listening yet.
+      // startListening() is called by _drainAudioQueue() when playback actually finishes.
       break
 
     case 'SESSION_START':
