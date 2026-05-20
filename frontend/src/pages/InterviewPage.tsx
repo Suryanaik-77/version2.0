@@ -157,18 +157,84 @@ export default function InterviewPage() {
   }, [sessionId])
 
   useEffect(() => {
-    const onHide  = () => sendIntegrityEvent('tab_hidden')
+    const onHide  = () => { if (document.hidden) sendIntegrityEvent('tab_hidden') }
     const onBlur  = () => sendIntegrityEvent('window_blur')
     const onPaste = () => sendIntegrityEvent('clipboard_paste')
+    const onCopy  = () => sendIntegrityEvent('clipboard_copy')
     document.addEventListener('visibilitychange', onHide)
     window.addEventListener('blur', onBlur)
     document.addEventListener('paste', onPaste)
+    document.addEventListener('copy', onCopy)
+
+    // Split screen detection — window width < 80% of screen
+    let splitWarnings = 0
+    const checkSplit = () => {
+      if (stage !== 'interview') return
+      const ratio = window.innerWidth / screen.width
+      if (ratio < 0.8) {
+        splitWarnings++
+        sendIntegrityEvent('split_screen')
+        if (splitWarnings >= 3) {
+          sendIntegrityEvent('split_screen_termination')
+        }
+      }
+    }
+    window.addEventListener('resize', checkSplit)
+
+    // DOM overlay detection — AI answer overlays injected into page
+    const scanOverlays = () => {
+      document.querySelectorAll('div, iframe, section').forEach(el => {
+        const style = getComputedStyle(el)
+        const z = parseInt(style.zIndex || '0')
+        const w = el.clientWidth
+        const h = el.clientHeight
+        if (z > 9000 && w > 200 && h > 100 && style.position === 'fixed') {
+          sendIntegrityEvent('dom_overlay')
+        }
+      })
+    }
+
+    // AI extension detection — known AI assistant extensions
+    const scanExtensions = () => {
+      const selectors = [
+        '[data-grammarly-part]', '#grammarly-mirror-div',
+        '.cib-serp-main', '#copilot-sidebar',
+        '[class*="chatgpt"]', '[class*="claude"]',
+        '[id*="bard"]', '[class*="gemini"]',
+        '.notion-ai-panel', '[data-testid="ai-assist"]',
+      ]
+      selectors.forEach(sel => {
+        const found = document.querySelectorAll(sel)
+        if (found.length > 0) {
+          sendIntegrityEvent('ai_extension_detected')
+        }
+      })
+    }
+
+    // DevTools detection — window size difference
+    const checkDevtools = () => {
+      const threshold = 160
+      if (window.outerWidth - window.innerWidth > threshold || window.outerHeight - window.innerHeight > threshold) {
+        sendIntegrityEvent('devtools_opened')
+      }
+    }
+
+    // Run scans periodically
+    const scanInterval = setInterval(scanExtensions, 5000)
+    const overlayInterval = setInterval(scanOverlays, 3000)
+    const devtoolsInterval = setInterval(checkDevtools, 5000)
+
     return () => {
       document.removeEventListener('visibilitychange', onHide)
       window.removeEventListener('blur', onBlur)
       document.removeEventListener('paste', onPaste)
+      document.removeEventListener('copy', onCopy)
+      window.removeEventListener('resize', checkSplit)
+      clearInterval(scanInterval)
+      clearInterval(overlayInterval)
+      clearInterval(devtoolsInterval)
     }
-  }, [sendIntegrityEvent])
+  }, [sendIntegrityEvent, stage])
 
   const isEnded      = wsStatus === 'ended'
   const isConnecting = wsStatus === 'connecting' || wsStatus === 'reconnecting'

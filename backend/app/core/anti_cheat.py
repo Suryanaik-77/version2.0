@@ -44,6 +44,7 @@ INTEGRITY_TTL = 86400  # 24 hours
 # ── Event types ───────────────────────────────────────────────────────────────
 
 class IntegrityEventType(str, Enum):
+    # Browser events
     TAB_HIDDEN           = "tab_hidden"
     TAB_VISIBLE          = "tab_visible"
     WINDOW_BLUR          = "window_blur"
@@ -55,6 +56,13 @@ class IntegrityEventType(str, Enum):
     RAPID_ANSWER         = "rapid_answer"
     LONG_PAUSE           = "long_pause"
     ANSWER_RESET         = "answer_reset"
+    # Advanced detection (from monolith)
+    SPLIT_SCREEN         = "split_screen"
+    SPLIT_SCREEN_TERM    = "split_screen_termination"
+    DOM_OVERLAY          = "dom_overlay"
+    AI_EXTENSION         = "ai_extension_detected"
+    PHONE_DETECTED       = "phone_detected"
+    AI_ANSWER_OVERLAY    = "ai_answer_overlay"
 
 
 # Event severity weights (subtract from 100)
@@ -68,6 +76,12 @@ EVENT_WEIGHTS: dict[IntegrityEventType, int] = {
     IntegrityEventType.RAPID_ANSWER:       10,
     IntegrityEventType.LONG_PAUSE:          2,
     IntegrityEventType.ANSWER_RESET:        3,
+    IntegrityEventType.SPLIT_SCREEN:       10,
+    IntegrityEventType.SPLIT_SCREEN_TERM:  30,
+    IntegrityEventType.DOM_OVERLAY:        15,
+    IntegrityEventType.AI_EXTENSION:       25,
+    IntegrityEventType.PHONE_DETECTED:     10,
+    IntegrityEventType.AI_ANSWER_OVERLAY:  20,
 }
 
 
