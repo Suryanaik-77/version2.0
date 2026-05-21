@@ -87,6 +87,7 @@ export default function InterviewPage() {
     if (!resumeFile && !resumeText) return
     setCreating(true)
     try {
+      // First pass: create with a default domain — backend parses resume and detects domain
       let res
       if (resumeFile) {
         res = await sessionApi.createWithFile(selectedDomain, resumeFile)
@@ -94,10 +95,20 @@ export default function InterviewPage() {
         res = await sessionApi.create(selectedDomain, resumeText)
       }
       const sid = res.data?.session_id || res.data?.id
+      const parsedDomain = res.data?.resume?.domain || ''
+
+      // Auto-select domain from parsed resume
+      const DOMAIN_MAP: Record<string, DomainKey> = {
+        'physical_design': 'PHYSICAL_DESIGN',
+        'analog_layout': 'ANALOG_LAYOUT',
+        'design_verification': 'DESIGN_VERIFICATION',
+      }
+      const detectedDomain = DOMAIN_MAP[parsedDomain] || selectedDomain
+      const domainLabel = DOMAIN_LABELS[detectedDomain] || detectedDomain
+
       if (sid) {
         setSessionId(sid)
-        setDomain(DOMAIN_LABELS[selectedDomain] || selectedDomain)
-        // Show parsed resume preview before starting interview
+        setDomain(domainLabel)
         if (res.data?.resume) {
           setParsedResume(res.data.resume)
           setStage('resume_preview')
@@ -260,13 +271,7 @@ export default function InterviewPage() {
   const isConnecting = wsStatus === 'connecting' || wsStatus === 'reconnecting'
   const isLive       = wsStatus === 'connected'
 
-  const DOMAIN_OPTIONS: { key: DomainKey; label: string; desc: string }[] = [
-    { key: 'PHYSICAL_DESIGN', label: 'Physical Design', desc: 'Floorplan, CTS, timing closure, routing' },
-    { key: 'ANALOG_LAYOUT', label: 'Analog Layout', desc: 'Device matching, parasitics, DRC/LVS' },
-    { key: 'DESIGN_VERIFICATION', label: 'Design Verification', desc: 'UVM, coverage, formal, SVA' },
-  ]
-
-  // ── Stage 1: Setup (resume + domain) ──
+  // ── Stage 1: Setup (resume upload) ──
   if (stage === 'setup') {
     return (
       <div style={{
@@ -288,14 +293,14 @@ export default function InterviewPage() {
             Interview Setup
           </h2>
           <p style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 24 }}>
-            Upload your resume and select a domain. The interviewer will personalize questions based on your experience.
+            Upload your resume. The domain will be detected automatically from your experience.
           </p>
 
           {/* Resume upload */}
           <label style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             padding: '24px', border: '2px dashed var(--border-2)', borderRadius: 12,
-            cursor: 'pointer', marginBottom: 20,
+            cursor: 'pointer', marginBottom: 24,
             background: resumeText ? 'rgba(34,197,94,0.05)' : 'var(--bg-1)',
             borderColor: resumeText ? 'rgba(34,197,94,0.3)' : 'var(--border-2)',
           }}>
@@ -319,37 +324,6 @@ export default function InterviewPage() {
             )}
           </label>
 
-          {/* Domain selection */}
-          <div style={{ marginBottom: 24 }}>
-            <p style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 8, fontFamily: 'var(--font-mono)', letterSpacing: '0.05em', textTransform: 'uppercase' }}>Domain</p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {DOMAIN_OPTIONS.map(d => (
-                <button
-                  key={d.key}
-                  onClick={() => setSelectedDomain(d.key)}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 12,
-                    padding: '12px 16px', border: '1px solid',
-                    borderColor: selectedDomain === d.key ? 'var(--accent)' : 'var(--border-1)',
-                    background: selectedDomain === d.key ? 'rgba(99,102,241,0.05)' : 'var(--bg-1)',
-                    borderRadius: 10, cursor: 'pointer', textAlign: 'left',
-                    fontFamily: 'var(--font-body)',
-                  }}
-                >
-                  <div style={{
-                    width: 16, height: 16, borderRadius: '50%', flexShrink: 0,
-                    border: `2px solid ${selectedDomain === d.key ? 'var(--accent)' : 'var(--border-2)'}`,
-                    background: selectedDomain === d.key ? 'var(--accent)' : 'transparent',
-                  }} />
-                  <div>
-                    <p style={{ fontSize: 13, color: 'var(--text-0)', fontWeight: 500 }}>{d.label}</p>
-                    <p style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 1 }}>{d.desc}</p>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-
           <button
             disabled={!resumeText || creating}
             onClick={handleCreateSession}
@@ -361,7 +335,7 @@ export default function InterviewPage() {
               fontFamily: 'var(--font-body)',
             }}
           >
-            {creating ? 'Creating session...' : !resumeText ? 'Upload resume to continue' : 'Next — Camera & Mic'}
+            {creating ? 'Parsing resume...' : !resumeText ? 'Upload resume to continue' : 'Next'}
           </button>
         </div>
       </div>
