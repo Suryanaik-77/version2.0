@@ -405,12 +405,12 @@ export default function InterviewPage() {
               }}>
                 <p style={{ fontSize: 10, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-4)', marginBottom: 8 }}>Skills</p>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                  {parsedResume.skills.map((s, i) => (
+                  {parsedResume.skills.map((s: any, i) => (
                     <span key={i} style={{
                       fontSize: 11, padding: '3px 8px', borderRadius: 6,
                       background: 'var(--accent-8)', color: 'var(--accent-dim)',
                       border: '1px solid var(--accent-15)',
-                    }}>{s}</span>
+                    }}>{typeof s === 'string' ? s : (s?.name || JSON.stringify(s))}</span>
                   ))}
                 </div>
               </div>
@@ -423,12 +423,12 @@ export default function InterviewPage() {
               }}>
                 <p style={{ fontSize: 10, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-4)', marginBottom: 8 }}>Tools</p>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                  {parsedResume.tools.map((t, i) => (
+                  {parsedResume.tools.map((t: any, i) => (
                     <span key={i} style={{
                       fontSize: 11, padding: '3px 8px', borderRadius: 6,
                       background: 'rgba(34,197,94,0.08)', color: 'var(--green, #22c55e)',
                       border: '1px solid rgba(34,197,94,0.15)',
-                    }}>{t}</span>
+                    }}>{typeof t === 'string' ? t : (t?.name || JSON.stringify(t))}</span>
                   ))}
                 </div>
               </div>
@@ -443,12 +443,15 @@ export default function InterviewPage() {
             }}>
               <p style={{ fontSize: 10, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-4)', marginBottom: 8 }}>Key Projects</p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {parsedResume.key_projects.map((p, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                    <span style={{ color: 'var(--text-4)', fontSize: 11, marginTop: 1, flexShrink: 0 }}>&#9656;</span>
-                    <p style={{ fontSize: 13, color: 'var(--text-1)', lineHeight: 1.5 }}>{p}</p>
-                  </div>
-                ))}
+                {parsedResume.key_projects.map((p: any, i) => {
+                  const text = typeof p === 'string' ? p : (p?.project_name || p?.name || p?.description || JSON.stringify(p))
+                  return (
+                    <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                      <span style={{ color: 'var(--text-4)', fontSize: 11, marginTop: 1, flexShrink: 0 }}>&#9656;</span>
+                      <p style={{ fontSize: 13, color: 'var(--text-1)', lineHeight: 1.5 }}>{text}</p>
+                    </div>
+                  )
+                })}
               </div>
             </div>
           )}
