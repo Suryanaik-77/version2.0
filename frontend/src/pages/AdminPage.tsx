@@ -1259,9 +1259,10 @@ function ObservabilityTab() {
         <select value={logFilter.step || ''} onChange={e => setLogFilter(f => ({ ...f, step: e.target.value || undefined }))} style={{ ...selectStyle, width: 'auto' }}>
           <option value="">All steps</option>
           <option value="LLM_question">LLM Question</option>
-          <option value="LLM_eval">LLM Eval</option>
+          <option value="LLM_evaluation">LLM Evaluation</option>
           <option value="STT">STT</option>
           <option value="TTS">TTS</option>
+          <option value="resume_parsing">Resume Parsing</option>
         </select>
         <select value={logFilter.status || ''} onChange={e => setLogFilter(f => ({ ...f, status: e.target.value || undefined }))} style={{ ...selectStyle, width: 'auto' }}>
           <option value="">All status</option>

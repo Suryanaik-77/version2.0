@@ -183,12 +183,17 @@ class DeepgramTTS:
                 record_event("tts.synthesized", session_id=session_id,
                              provider="deepgram", voice=self._voice,
                              chars=len(text), bytes=len(audio_bytes), latency_ms=elapsed_ms)
+                track_tts_call(session_id=session_id, latency_ms=elapsed_ms,
+                               char_count=len(text), provider="deepgram", status="success")
                 log.info("tts.deepgram", voice=self._voice, latency_ms=elapsed_ms, chars=len(text))
                 return audio_bytes
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            elapsed_ms = int((time.monotonic() - t_start) * 1000)
             log.error("tts.deepgram_error", error=str(exc), session_id=session_id)
+            track_tts_call(session_id=session_id, latency_ms=elapsed_ms,
+                           char_count=len(text), provider="deepgram", status="failure", error=str(exc))
             return _silence_pcm(300)
 
     async def stream_synthesize(self, text: str, session_id: str = "") -> AsyncIterator[bytes]:
@@ -247,12 +252,17 @@ class InworldTTS:
                 record_event("tts.synthesized", session_id=session_id,
                              provider="inworld", voice=self._voice,
                              chars=len(text), bytes=len(audio_bytes), latency_ms=elapsed_ms)
+                track_tts_call(session_id=session_id, latency_ms=elapsed_ms,
+                               char_count=len(text), provider="inworld", status="success")
                 log.info("tts.inworld", voice=self._voice, latency_ms=elapsed_ms, chars=len(text))
                 return audio_bytes
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            elapsed_ms = int((time.monotonic() - t_start) * 1000)
             log.error("tts.inworld_error", error=str(exc), session_id=session_id)
+            track_tts_call(session_id=session_id, latency_ms=elapsed_ms,
+                           char_count=len(text), provider="inworld", status="failure", error=str(exc))
             return _silence_pcm(300)
 
     async def stream_synthesize(self, text: str, session_id: str = "") -> AsyncIterator[bytes]:

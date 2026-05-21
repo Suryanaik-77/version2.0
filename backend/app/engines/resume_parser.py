@@ -67,19 +67,26 @@ async def parse_resume(resume_text: str, domain: str = "physical_design") -> dic
         )
         return resp.choices[0].message.content.strip()
 
+    from app.observability.call_tracker import track_resume_parse
+    import time as _time
     loop = asyncio.get_event_loop()
 
     for attempt in range(3):
+        t0 = _time.monotonic()
         try:
             raw = await asyncio.wait_for(loop.run_in_executor(None, _sync_parse), timeout=10.0)
+            elapsed = int((_time.monotonic() - t0) * 1000)
             parsed = _safe_json(raw)
             if parsed and parsed.get("candidate_name"):
                 parsed.setdefault("domain", domain)
+                track_resume_parse(session_id="", latency_ms=elapsed, status="success")
                 log.info("resume.parsed", name=parsed.get("candidate_name"),
                          skills=len(parsed.get("skills", [])), attempt=attempt+1)
                 return parsed
             log.warning("resume.empty_result", attempt=attempt+1)
         except Exception as e:
+            elapsed = int((_time.monotonic() - t0) * 1000)
+            track_resume_parse(session_id="", latency_ms=elapsed, status="failure", error=str(e))
             log.warning("resume.parse_failed", attempt=attempt+1, error=str(e))
 
     return {"candidate_name": "Candidate", "domain": domain, "level": "trained_fresher"}

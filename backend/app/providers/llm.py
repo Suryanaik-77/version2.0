@@ -169,7 +169,7 @@ async def stream_generate(
         await _record_success("openai")
         track_llm_call(
             session_id=session_id,
-            step="LLM_question" if turn_number > 0 else "LLM_eval",
+            step="LLM_question",
             model=model,
             latency_ms=elapsed_ms,
             output_tokens=tokens_out,

@@ -32,6 +32,7 @@ from app.models.session import (
 )
 from app.observability.metrics import record_event
 from app.providers.llm import generate, LLMTimeoutError, LLMCircuitOpenError, LLMProviderError
+from app.observability.call_tracker import track_llm_call
 
 log = structlog.get_logger(__name__)
 settings = get_settings()
@@ -76,6 +77,15 @@ async def run_async_eval(
                 use_eval_model=True,
             ),
             timeout=settings.EVAL_ASYNC_DEADLINE_MS / 1000,
+        )
+
+        # Track eval LLM call
+        eval_latency = int((time.monotonic() - t_start) * 1000)
+        from app.core.runtime_config import get as rc_get
+        eval_model = rc_get("eval_model", "") or settings.OPENAI_MODEL
+        track_llm_call(
+            session_id=session_id, step="LLM_evaluation", model=eval_model,
+            latency_ms=eval_latency, status="success",
         )
 
         # Step 2: Parse scores
@@ -189,17 +199,25 @@ async def run_async_eval(
         )
 
     except asyncio.TimeoutError:
+        elapsed_ms = int((time.monotonic() - t_start) * 1000)
         log.warning("eval.timeout", session_id=session_id, turn=turn_number)
         record_event("eval.timeout", session_id=session_id)
+        track_llm_call(session_id=session_id, step="LLM_evaluation", model="unknown",
+                        latency_ms=elapsed_ms, status="failure", error="timeout")
 
     except (LLMTimeoutError, LLMCircuitOpenError, LLMProviderError) as exc:
+        elapsed_ms = int((time.monotonic() - t_start) * 1000)
         log.warning("eval.llm_error", session_id=session_id, error=str(exc))
         record_event("eval.llm_error", session_id=session_id, error=str(exc))
+        track_llm_call(session_id=session_id, step="LLM_evaluation", model="unknown",
+                        latency_ms=elapsed_ms, status="failure", error=str(exc))
 
     except Exception as exc:
-        # Eval failure is NEVER session-ending
+        elapsed_ms = int((time.monotonic() - t_start) * 1000)
         log.error("eval.unexpected_error", session_id=session_id, error=str(exc), exc_info=exc)
         record_event("eval.error", session_id=session_id)
+        track_llm_call(session_id=session_id, step="LLM_evaluation", model="unknown",
+                        latency_ms=elapsed_ms, status="failure", error=str(exc))
 
 
 def _parse_eval_json(raw: str) -> dict | None:
