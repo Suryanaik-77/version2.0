@@ -66,6 +66,8 @@ class CognitionResult:
     project_grounding: str      # e.g. "They worked on OTA layout for a 28nm tapeout."
     # Resume grounding alert — flags when candidate drifts from resume/domain
     grounding_alert: str        # e.g. "Off-domain drift detected. Redirect to resume areas." or ""
+    # Interview-level dimension guidance — prevents mining one evaluation dimension too long
+    dimension_guidance: str     # e.g. "You've probed concept/mechanism enough. Shift to debugging or ownership."
 
 
 # ── Redis key ────────────────────────────────────────────────────────────────
@@ -286,6 +288,11 @@ async def assess(
     # Build verified context string (anti-repetition)
     verified_context = _build_verified_context(ts)
 
+    # Interview-level dimension tracking (across ALL topics)
+    dimension_guidance = _track_interview_dimensions(
+        cog_state, new_signals, turn_number
+    )
+
     # Project grounding — find a specific project to anchor to
     project_grounding = _build_project_grounding(
         cog_state, current_topic, transcript, domain
@@ -323,6 +330,7 @@ async def assess(
         verified_context=verified_context,
         project_grounding=project_grounding,
         grounding_alert=grounding_alert,
+        dimension_guidance=dimension_guidance,
     )
 
 
@@ -903,6 +911,91 @@ def _get_domain_voice(domain: VLSIDomain, action: str) -> str:
     }
     key = key_map.get(action, "probe")
     return voices.get(key, "")
+
+
+# ── Interview-level dimension tracking ───────────────────────────────────────
+# Tracks evaluation dimensions ACROSS ALL TOPICS for the entire interview.
+# Prevents mining one dimension (concept, mechanism, debugging, etc.) too long.
+# Universal across PD/DV/AL — dimensions are the same, only content differs.
+
+_EVAL_DIMENSIONS = [
+    "concept",          # basic understanding of what something is
+    "mechanism",        # how/why it works at a deeper level
+    "ownership",        # what the candidate personally did
+    "debugging",        # how they found/fixed issues
+    "implementation",   # specific steps, tools, commands, flow
+    "tradeoff",         # decisions made, alternatives considered
+    "project_specific", # grounded to their actual project
+]
+
+_DIMENSION_SATURATION_THRESHOLD = 3  # after 3 probes in one dimension, it's saturated
+
+
+def _track_interview_dimensions(
+    cog_state: dict,
+    new_signals: list[str],
+    turn_number: int,
+) -> str:
+    """
+    Track which evaluation dimensions have been explored across the WHOLE interview.
+    When a dimension is saturated (3+ probes), guide toward unexplored dimensions.
+
+    This is the key anti-looping mechanism:
+    - DV interview stuck on "coverage concept" → push to debugging/ownership
+    - AL interview stuck on "matching mechanism" → push to tradeoff/project
+    - PD interview stuck on "timing concept" → push to debugging/implementation
+
+    Returns a guidance string or "" if no guidance needed.
+    """
+    dims = cog_state.get("interview_dimensions", {})
+
+    # Update dimension counts from this turn's signals
+    for sig in new_signals:
+        if sig in _EVAL_DIMENSIONS:
+            dims[sig] = dims.get(sig, 0) + 1
+
+    cog_state["interview_dimensions"] = dims
+
+    # Skip guidance on early turns
+    if turn_number <= 4:
+        return ""
+
+    # Find saturated and unexplored dimensions
+    saturated = [d for d in _EVAL_DIMENSIONS if dims.get(d, 0) >= _DIMENSION_SATURATION_THRESHOLD]
+    explored = [d for d in _EVAL_DIMENSIONS if 0 < dims.get(d, 0) < _DIMENSION_SATURATION_THRESHOLD]
+    unexplored = [d for d in _EVAL_DIMENSIONS if dims.get(d, 0) == 0]
+
+    if not saturated:
+        return ""
+
+    # Build guidance — push toward unexplored dimensions
+    # Priority: debugging > ownership > tradeoff > project_specific > implementation
+    priority_order = ["debugging", "ownership", "tradeoff", "project_specific", "implementation", "mechanism", "concept"]
+    suggested = []
+    for d in priority_order:
+        if d in unexplored or d in explored:
+            if d not in saturated:
+                suggested.append(d)
+        if len(suggested) >= 2:
+            break
+
+    if not suggested:
+        return ""
+
+    dim_labels = {
+        "concept": "conceptual understanding",
+        "mechanism": "how/why it works",
+        "ownership": "what they personally did",
+        "debugging": "how they debugged issues",
+        "implementation": "specific steps and tools",
+        "tradeoff": "decisions and tradeoffs",
+        "project_specific": "their actual project experience",
+    }
+
+    sat_names = ", ".join(dim_labels.get(d, d) for d in saturated[:2])
+    sug_names = ", ".join(dim_labels.get(d, d) for d in suggested)
+
+    return f"You've explored enough: {sat_names}. Shift toward: {sug_names}."
 
 
 # ── Verified signal context (anti-repetition) ──────────────────────────────

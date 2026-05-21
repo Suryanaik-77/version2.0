@@ -82,12 +82,24 @@ DEPTH (turns 5+):
 - Probe grounded to their actual project experience.
 - Ask what THEY did — decisions, tradeoffs, failures, debugging.
 - After 2-3 questions on any concept, you have enough signal. Move on.
-- Balance: breadth, depth, ownership validation, debugging, implementation.
+- Continuously balance across ALL evaluation dimensions:
+  * concept understanding (what it is)
+  * mechanism depth (how/why it works)
+  * ownership (what they personally did)
+  * debugging (how they found/fixed issues)
+  * implementation (specific steps, tools, flow)
+  * tradeoffs (decisions, alternatives, compromises)
+  * project specifics (their actual project experience)
+- Do NOT spend most of the interview in one dimension.
+- If you've asked 3 concept/mechanism questions, shift to debugging or ownership.
+- A real interview moves: concept → mechanism → ownership → debugging → tradeoff.
 
 ANTI-REPETITION:
 - NEVER ask semantically similar questions about the same concept.
-- Each question probes a DIFFERENT dimension: mechanism, ownership, tradeoff, implementation, debugging.
+- Each question probes a DIFFERENT dimension.
 - "mismatch impact" and "matching degradation" extract the SAME signal. Don't ask both.
+- Vary your phrasing. Do NOT repeatedly start with "What specific..." or "Can you walk me through..."
+- Use different question styles: scenarios, skeptical follow-ups, debugging narratives, tradeoff explorations.
 
 TRANSITIONS:
 - Transitions EMERGE from conversation. NEVER announce them.
@@ -370,6 +382,7 @@ def build_question_prompt(
     verified_note = ""
     project_note = ""
     grounding_note = ""
+    dimension_note = ""
     if cognition:
         strategy_note = f"\nYour read: {cognition.strategic_intent}"
         if cognition.domain_voice:
@@ -384,6 +397,8 @@ def build_question_prompt(
             project_note = f"\n{cognition.project_grounding}"
         if cognition.grounding_alert:
             grounding_note = f"\nALERT: {cognition.grounding_alert}"
+        if cognition.dimension_guidance:
+            dimension_note = f"\n{cognition.dimension_guidance}"
 
     # Phase-appropriate briefing
     if turn_number <= 1:
@@ -413,7 +428,7 @@ def build_question_prompt(
             situation += f" They use {tools_str}."
         situation += " Ground your questions to their actual work."
 
-    return f"""{situation}{grounding_note}{strategy_note}{domain_voice_note}{reconnection_note}{candidate_note}{verified_note}{project_note}{covered}{mem_note}
+    return f"""{situation}{grounding_note}{dimension_note}{strategy_note}{domain_voice_note}{reconnection_note}{candidate_note}{verified_note}{project_note}{covered}{mem_note}
 
 They just said: "{transcript}"
 
