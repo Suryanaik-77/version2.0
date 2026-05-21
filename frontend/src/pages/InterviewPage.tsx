@@ -109,8 +109,16 @@ export default function InterviewPage() {
       if (sid) {
         setSessionId(sid)
         setDomain(domainLabel)
-        if (res.data?.resume) {
-          setParsedResume(res.data.resume)
+        const r = res.data?.resume
+        // Show preview only if parser extracted real data (not just fallback)
+        const hasRealData = r && (
+          (r.skills && r.skills.length > 0) ||
+          (r.tools && r.tools.length > 0) ||
+          (r.key_projects && r.key_projects.length > 0) ||
+          (r.candidate_name && r.candidate_name !== 'Candidate')
+        )
+        if (hasRealData) {
+          setParsedResume(r)
           setStage('resume_preview')
         } else {
           setStage('permissions')

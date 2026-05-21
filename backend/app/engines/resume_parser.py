@@ -76,14 +76,35 @@ async def parse_resume(resume_text: str, domain: str = "physical_design") -> dic
         try:
             raw = await asyncio.wait_for(loop.run_in_executor(None, _sync_parse), timeout=10.0)
             elapsed = int((_time.monotonic() - t0) * 1000)
+            log.info("resume.raw_response", attempt=attempt+1, raw_len=len(raw),
+                     raw_preview=raw[:200] if raw else "(empty)")
             parsed = _safe_json(raw)
-            if parsed and parsed.get("candidate_name"):
+            if parsed:
+                # Accept even if candidate_name is missing — fill defaults
+                parsed.setdefault("candidate_name", "Candidate")
                 parsed.setdefault("domain", domain)
-                track_resume_parse(session_id="", latency_ms=elapsed, status="success")
-                log.info("resume.parsed", name=parsed.get("candidate_name"),
-                         skills=len(parsed.get("skills", [])), attempt=attempt+1)
-                return parsed
-            log.warning("resume.empty_result", attempt=attempt+1)
+                parsed.setdefault("level", "trained_fresher")
+                parsed.setdefault("skills", [])
+                parsed.setdefault("tools", [])
+                parsed.setdefault("key_projects", [])
+                parsed.setdefault("education", "")
+                parsed.setdefault("years_experience", 0)
+                # Consider valid if we got at least skills OR tools OR projects
+                has_content = (
+                    parsed.get("skills") or parsed.get("tools")
+                    or parsed.get("key_projects") or parsed.get("candidate_name", "") != "Candidate"
+                )
+                if has_content:
+                    track_resume_parse(session_id="", latency_ms=elapsed, status="success")
+                    log.info("resume.parsed", name=parsed.get("candidate_name"),
+                             skills=len(parsed.get("skills", [])),
+                             tools=len(parsed.get("tools", [])),
+                             projects=len(parsed.get("key_projects", [])),
+                             attempt=attempt+1)
+                    return parsed
+            log.warning("resume.empty_result", attempt=attempt+1,
+                        raw_preview=raw[:150] if raw else "(empty)",
+                        parsed_keys=list(parsed.keys()) if parsed else None)
         except Exception as e:
             elapsed = int((_time.monotonic() - t0) * 1000)
             track_resume_parse(session_id="", latency_ms=elapsed, status="failure", error=str(e))
