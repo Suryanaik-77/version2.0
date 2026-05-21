@@ -23,10 +23,11 @@ PARSE_PROMPT = """Extract from this resume. Return ONLY valid JSON:
 Rules:
 - email: extract email address if present, empty string if not found
 - phone: extract phone number if present, empty string if not found
-- level: 0 years = fresh_graduate, 0-1 year = trained_fresher, 1-3 = experienced_junior, 3+ = experienced_senior
-- skills: VLSI/EDA specific only
-- tools: EDA tool names (ICC2, PrimeTime, Calibre, Virtuoso, VCS, etc.)
-- key_projects: max 5
+- years_experience: convert to YEARS as a decimal. 10 months = 0.8, 6 months = 0.5, 1.5 years = 1.5, 2 years 3 months = 2.25. NEVER confuse months with years.
+- level: based on years_experience: 0 = fresh_graduate, 0-1 year = trained_fresher, 1-3 years = experienced_junior, 3+ years = experienced_senior
+- skills: VLSI/EDA specific only, return as flat list of strings
+- tools: EDA tool names (ICC2, PrimeTime, Calibre, Virtuoso, VCS, etc.), return as flat list of strings
+- key_projects: max 5, return as flat list of strings (project names only, not objects)
 - domain: physical_design or analog_layout or design_verification
 
 RESUME:
