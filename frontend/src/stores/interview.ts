@@ -42,6 +42,7 @@ interface InterviewState {
   domain: string | null
   reconnectAttempt: number
   reconnectTimer: number | null
+  reconnectMessage: string
   ws: WebSocket | null
 
   connect: (sessionId: string) => void
@@ -298,6 +299,7 @@ export const useInterview = create<InterviewState>((set, get) => ({
   domain: null,
   reconnectAttempt: 0,
   reconnectTimer: null,
+  reconnectMessage: '',
   ws: null,
 
   connect: (sessionId: string) => {
@@ -409,7 +411,7 @@ export const useInterview = create<InterviewState>((set, get) => ({
       sessionId: null, wsStatus: 'disconnected', audioState: 'silence',
       mode: 'PROBING', turnNumber: 0, currentQuestion: '', transcript: '',
       isStreaming: false, turns: [], domain: null,
-      reconnectAttempt: 0, reconnectTimer: null, ws: null,
+      reconnectAttempt: 0, reconnectTimer: null, reconnectMessage: '', ws: null,
     })
   },
 }))
@@ -487,7 +489,15 @@ function handleMessage(msg: Record<string, unknown>) {
       break
 
     case 'RECONNECTED':
-      store.setAudioState('silence')
+      // Session restored after reconnect — update state from server
+      if (p.turn_count) useInterview.setState({ turnNumber: p.turn_count })
+      if (p.mode) store.setMode(p.mode as InterviewMode)
+      useInterview.setState({
+        audioState: 'silence',
+        reconnectMessage: p.message || 'Session restored. Continuing interview.',
+      })
+      // Clear the reconnect message after 5 seconds
+      setTimeout(() => useInterview.setState({ reconnectMessage: '' }), 5000)
       break
 
     case 'ERROR':

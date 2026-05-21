@@ -30,6 +30,7 @@ export default function InterviewPage() {
   const {
     wsStatus, audioState, mode, turnNumber,
     currentQuestion, transcript, isStreaming, turns,
+    reconnectMessage,
     connect, disconnect, bargeIn,
   } = useInterview()
 
@@ -476,7 +477,7 @@ export default function InterviewPage() {
         </div>
       </header>
 
-      {/* ── Reconnect banner ── */}
+      {/* ── Reconnecting banner ── */}
       {wsStatus === 'reconnecting' && (
         <div style={{
           background: 'var(--yellow-bg)', borderBottom: '1px solid var(--yellow-border)',
@@ -484,7 +485,20 @@ export default function InterviewPage() {
           display: 'flex', alignItems: 'center', gap: 8,
         }}>
           <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--yellow)', animation: 'pulse 1.2s infinite', flexShrink: 0 }} />
-          Connection lost — reconnecting automatically…
+          Connection became unstable. Reconnecting automatically — your session is preserved.
+        </div>
+      )}
+
+      {/* ── Reconnect success banner ── */}
+      {reconnectMessage && wsStatus === 'connected' && (
+        <div style={{
+          background: 'rgba(34,197,94,0.06)', borderBottom: '1px solid rgba(34,197,94,0.15)',
+          padding: '8px 24px', fontSize: 12, color: 'var(--green, #22c55e)',
+          display: 'flex', alignItems: 'center', gap: 8,
+          animation: 'fade-in 0.3s',
+        }}>
+          <span style={{ color: 'var(--green, #22c55e)' }}>&#10003;</span>
+          {reconnectMessage}
         </div>
       )}
 

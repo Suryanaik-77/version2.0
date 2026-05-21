@@ -234,16 +234,32 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
     
     await hub.connect(session_id, connection_id, websocket, is_admin=is_admin)
 
-    # ── Send opening question ONLY on first connection (not reconnect) ──────────
+    # ── First connection vs reconnect ────────────────────────────────────────────
     state = await get_session(session_id)
     if state and state.turn_count == 0:
+        # First connection — send opening greeting
         asyncio.create_task(
             _send_opening(session_id, connection_id),
             name=f"opening_{session_id}",
         )
     else:
-        log.info("ws.skipped_opening_reconnect", session_id=session_id,
-                 turn_count=state.turn_count if state else "no_state")
+        # Reconnect — send RECONNECTED event with session context
+        # This tells the frontend to show a reconnect banner and resume naturally
+        reconnect_event = WSEvent(
+            type=WSEventType.RECONNECTED,
+            session_id=session_id,
+            payload={
+                "turn_count": state.turn_count if state else 0,
+                "mode": state.mode.value if state else "PROBING",
+                "domain": state.active_domain.value if state else "",
+                "message": "Session restored. Continuing from where you left off.",
+            },
+        )
+        await hub.send_to_connection(connection_id, reconnect_event.to_json())
+        log.info("ws.reconnect_restored", session_id=session_id,
+                 turn_count=state.turn_count if state else 0)
+        # Record reconnect for observability
+        record_event("ws.reconnected", session_id=session_id)
 
     # ── Launch concurrent tasks ───────────────────────────────────────────────
     receive_task  = asyncio.create_task(_receive_loop(session_id, connection_id, websocket, is_admin))
