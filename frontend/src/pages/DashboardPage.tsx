@@ -1,11 +1,10 @@
-import React, { useState } from 'react'
+import React from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { sessionApi } from '@/lib/api'
 import { useAuth } from '@/stores/auth'
 import { Card, Badge, Skeleton, EmptyState, MonoLabel, PageContainer, SectionHeader, StatCard } from '@/components/ui'
-import { toast } from '@/hooks/useToast'
-import { formatDistanceToNow, format } from 'date-fns'
+import { formatDistanceToNow } from 'date-fns'
 
 type Domain = 'ANALOG_LAYOUT' | 'PHYSICAL_DESIGN' | 'DESIGN_VERIFICATION'
 
@@ -26,11 +25,6 @@ export default function DashboardPage() {
   const { user } = useAuth()
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const [selectedDomain, setSelectedDomain] = useState<Domain>('ANALOG_LAYOUT')
-  const [pickerOpen, setPickerOpen] = useState(false)
-  const [resumeText, setResumeText] = useState('')
-  const [resumeFile, setResumeFile] = useState<File | null>(null)
-  const [resumeLoading, setResumeLoading] = useState(false)
 
   const { data, isLoading } = useQuery({
     queryKey: ['sessions'],
@@ -43,28 +37,6 @@ export default function DashboardPage() {
   const avgScore = completed.length
     ? (completed.reduce((a: number, s: any) => a + (s.avg_score || 0), 0) / completed.length).toFixed(1)
     : '—'
-
-  const create = useMutation({
-    mutationFn: ({ domain, resume }: { domain: Domain; resume: string }) =>
-      sessionApi.create(domain, resume),
-    onSuccess: res => {
-      const sid = res.data?.session_id || res.data?.id
-      if (sid) { qc.invalidateQueries({ queryKey: ['sessions'] }); navigate(`/interview/${sid}`) }
-    },
-    onError: () => toast.error('Could not create session. Please try again.'),
-  })
-
-  const handleResumeFile = async (file: File) => {
-    setResumeFile(file)
-    setResumeLoading(true)
-    try {
-      const text = await file.text()
-      setResumeText(text)
-    } catch {
-      toast.error('Could not read file')
-    }
-    setResumeLoading(false)
-  }
 
   const firstName = user?.full_name?.split(' ')[0] || 'there'
 
@@ -93,114 +65,24 @@ export default function DashboardPage() {
           Start a new interview
         </h2>
         <p style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 20, maxWidth: 520 }}>
-          Upload your resume and select a domain. The interviewer will personalize questions based on your skills and projects.
+          Upload your resume, preview the parsed details, and start a personalized technical interview.
         </p>
 
-        {/* Resume upload */}
-        <div style={{ marginBottom: 20 }}>
-          <label style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
-            padding: '20px', border: '2px dashed var(--border-2)', borderRadius: 'var(--r-lg)',
-            cursor: 'pointer', background: resumeText ? 'var(--green-bg)' : 'var(--bg-1)',
-            borderColor: resumeText ? 'var(--green-border)' : 'var(--border-2)',
-            transition: 'all var(--dur-std)',
-          }}>
-            <input
-              type="file"
-              accept=".txt,.pdf,.doc,.docx"
-              style={{ display: 'none' }}
-              onChange={e => e.target.files?.[0] && handleResumeFile(e.target.files[0])}
-            />
-            {resumeLoading ? (
-              <span style={{ fontSize: 13, color: 'var(--text-2)' }}>Reading file...</span>
-            ) : resumeText ? (
-              <span style={{ fontSize: 13, color: 'var(--green)' }}>
-                {resumeFile?.name || 'Resume uploaded'} ({Math.round(resumeText.length / 1024)}KB)
-              </span>
-            ) : (
-              <span style={{ fontSize: 13, color: 'var(--text-3)' }}>
-                Drop resume here or click to upload (.txt, .pdf)
-              </span>
-            )}
-          </label>
-          {!resumeText && (
-            <p style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 6, textAlign: 'center' }}>
-              Resume helps the interviewer ask relevant questions about your experience
-            </p>
-          )}
-        </div>
-
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          {/* Domain picker */}
-          <div style={{ position: 'relative', flex: 1 }}>
-            <button
-              onClick={() => setPickerOpen(v => !v)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 8, width: '100%',
-                background: 'var(--bg-1)', border: '1px solid var(--border-2)',
-                borderRadius: 'var(--r-md)', padding: '9px 14px',
-                fontSize: 13, color: 'var(--text-1)', cursor: 'pointer',
-                fontFamily: 'var(--font-body)',
-                transition: 'border-color var(--dur-fast)',
-              }}
-            >
-              <span style={{
-                width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-                background: DOMAIN_META[selectedDomain].color,
-              }} />
-              {DOMAIN_META[selectedDomain].label}
-              <span style={{ marginLeft: 'auto', color: 'var(--text-3)', fontSize: 10 }}>▾</span>
-            </button>
-
-            {pickerOpen && (
-              <div style={{
-                position: 'absolute', top: 'calc(100% + 6px)', left: 0, right: 0,
-                background: 'var(--bg-0)', border: '1px solid var(--border-1)',
-                borderRadius: 'var(--r-lg)', boxShadow: 'var(--shadow-md)', zIndex: 50,
-                overflow: 'hidden',
-              }}>
-                {(Object.keys(DOMAIN_META) as Domain[]).map(d => (
-                  <button
-                    key={d}
-                    onClick={() => { setSelectedDomain(d); setPickerOpen(false) }}
-                    style={{
-                      display: 'block', width: '100%', textAlign: 'left',
-                      padding: '11px 16px',
-                      background: d === selectedDomain ? 'var(--bg-2)' : 'transparent',
-                      border: 'none', cursor: 'pointer', fontFamily: 'var(--font-body)',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <span style={{ width: 7, height: 7, borderRadius: '50%', background: DOMAIN_META[d].color, flexShrink: 0 }} />
-                      <div>
-                        <p style={{ fontSize: 13, color: 'var(--text-0)', fontWeight: d === selectedDomain ? 500 : 400 }}>{DOMAIN_META[d].label}</p>
-                        <p style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 1 }}>{DOMAIN_META[d].description}</p>
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <button
-            disabled={create.isPending || !resumeText}
-            onClick={() => create.mutate({ domain: selectedDomain, resume: resumeText })}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 7,
-              background: (create.isPending || !resumeText) ? 'var(--text-3)' : 'var(--accent)',
-              color: '#fff', border: 'none', borderRadius: 'var(--r-md)',
-              padding: '9px 24px', fontSize: 13, fontFamily: 'var(--font-body)',
-              fontWeight: 500, cursor: (create.isPending || !resumeText) ? 'not-allowed' : 'pointer',
-              flexShrink: 0,
-            }}
-          >
-            {create.isPending ? (
-              <span style={{ width: 13, height: 13, border: '1.5px solid rgba(255,255,255,0.4)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.65s linear infinite' }} />
-            ) : null}
-            {resumeText ? 'Begin Interview' : 'Upload Resume First'}
-          </button>
-        </div>
+        <button
+          onClick={() => navigate('/interview')}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            background: 'var(--accent)', color: '#fff', border: 'none',
+            borderRadius: 'var(--r-md)', padding: '11px 28px',
+            fontSize: 14, fontFamily: 'var(--font-body)', fontWeight: 500,
+            cursor: 'pointer',
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M7 1v12M1 7h12" stroke="white" strokeWidth="2" strokeLinecap="round"/>
+          </svg>
+          New Interview
+        </button>
       </Card>
 
       {/* ── Session history ── */}
