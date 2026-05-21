@@ -108,7 +108,7 @@ export const sessionApi = {
   parseResume: (file: File) => {
     const formData = new FormData()
     formData.append('file', file)
-    return api.post('/api/parse-resume', formData, {
+    return api.post('/sessions/parse-resume', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
       timeout: 30000,
     })

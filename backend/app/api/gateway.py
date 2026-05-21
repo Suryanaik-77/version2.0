@@ -41,7 +41,7 @@ async def health() -> dict:
 
 # ── Resume parsing (separate from session creation) ──────────────────────────
 
-@router.post("/api/parse-resume")
+@router.post("/sessions/parse-resume")
 async def parse_resume_endpoint(
     file: UploadFile = File(...),
     user: Annotated[TokenPayload, Depends(get_current_user)] = None,
