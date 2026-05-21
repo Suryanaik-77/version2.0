@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     OPENAI_BASE_URL: str = "https://api.openai.com/v1"
 
     MISTRAL_API_KEY: str = ""
+    CEREBRAS_API_KEY: str = ""
     INWORLD_API_KEY: str = ""
     DEEPGRAM_API_KEY: str = ""
     INWORLD_VOICE_ID: str = "Sarah"

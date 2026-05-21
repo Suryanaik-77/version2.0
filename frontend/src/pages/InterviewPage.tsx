@@ -68,61 +68,56 @@ export default function InterviewPage() {
   const [permError, setPermError] = useState('')
   const [mediaStream, setMediaStream] = useState<MediaStream | null>(null)
 
-  const handleResumeFile = async (file: File) => {
-    setResumeFile(file)
-    setResumeLoading(true)
-    // For PDF, don't try to read as text — backend will extract
-    if (file.name.toLowerCase().endsWith('.pdf')) {
-      setResumeText('(PDF uploaded)')
-    } else {
-      try {
-        const text = await file.text()
-        setResumeText(text)
-      } catch { }
-    }
-    setResumeLoading(false)
+  // Stored resume text for session creation (after preview)
+  const [parsedResumeText, setParsedResumeText] = useState('')
+
+  const DOMAIN_MAP: Record<string, DomainKey> = {
+    'physical_design': 'PHYSICAL_DESIGN',
+    'analog_layout': 'ANALOG_LAYOUT',
+    'design_verification': 'DESIGN_VERIFICATION',
   }
 
-  const handleCreateSession = async () => {
-    if (!resumeFile && !resumeText) return
+  const handleResumeUpload = async (file: File) => {
+    setResumeFile(file)
+    setResumeLoading(true)
     setCreating(true)
     try {
-      // First pass: create with a default domain — backend parses resume and detects domain
-      let res
-      if (resumeFile) {
-        res = await sessionApi.createWithFile(selectedDomain, resumeFile)
+      // Step 1: Parse resume (separate call — monolith approach)
+      const res = await sessionApi.parseResume(file)
+      const r = res.data?.resume
+
+      if (r && (r.skills?.length || r.tools?.length || r.key_projects?.length || (r.candidate_name && r.candidate_name !== 'Candidate'))) {
+        setParsedResume(r)
+        setParsedResumeText(res.data?.resume_text || r.resume_text || '')
+        // Auto-detect domain from resume
+        const detectedDomain = DOMAIN_MAP[r.domain] || 'PHYSICAL_DESIGN'
+        setSelectedDomain(detectedDomain)
+        setDomain(DOMAIN_LABELS[detectedDomain] || detectedDomain)
+        setResumeText('parsed')
+        setStage('resume_preview')
       } else {
-        res = await sessionApi.create(selectedDomain, resumeText)
+        // Parsing failed — still allow interview with manual text
+        setResumeText(res.data?.resume_text || '(uploaded)')
+        setParsedResumeText(res.data?.resume_text || '')
+        alert('Could not parse resume details. You can still proceed with the interview.')
+        setStage('permissions')
       }
+    } catch (e) {
+      alert('Failed to parse resume. Please try again.')
+    }
+    setResumeLoading(false)
+    setCreating(false)
+  }
+
+  const handleStartInterview = async () => {
+    // Step 2: Create session with already-parsed resume data (fast, no re-parsing)
+    setCreating(true)
+    try {
+      const res = await sessionApi.create(selectedDomain, parsedResumeText || resumeText)
       const sid = res.data?.session_id || res.data?.id
-      const parsedDomain = res.data?.resume?.domain || ''
-
-      // Auto-select domain from parsed resume
-      const DOMAIN_MAP: Record<string, DomainKey> = {
-        'physical_design': 'PHYSICAL_DESIGN',
-        'analog_layout': 'ANALOG_LAYOUT',
-        'design_verification': 'DESIGN_VERIFICATION',
-      }
-      const detectedDomain = DOMAIN_MAP[parsedDomain] || selectedDomain
-      const domainLabel = DOMAIN_LABELS[detectedDomain] || detectedDomain
-
       if (sid) {
         setSessionId(sid)
-        setDomain(domainLabel)
-        const r = res.data?.resume
-        // Show preview only if parser extracted real data (not just fallback)
-        const hasRealData = r && (
-          (r.skills && r.skills.length > 0) ||
-          (r.tools && r.tools.length > 0) ||
-          (r.key_projects && r.key_projects.length > 0) ||
-          (r.candidate_name && r.candidate_name !== 'Candidate')
-        )
-        if (hasRealData) {
-          setParsedResume(r)
-          setStage('resume_preview')
-        } else {
-          setStage('permissions')
-        }
+        setStage('permissions')
       }
     } catch {
       alert('Failed to create session. Please try again.')
@@ -304,47 +299,33 @@ export default function InterviewPage() {
             Upload your resume. The domain will be detected automatically from your experience.
           </p>
 
-          {/* Resume upload */}
+          {/* Resume upload — triggers parsing immediately */}
           <label style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            padding: '24px', border: '2px dashed var(--border-2)', borderRadius: 12,
-            cursor: 'pointer', marginBottom: 24,
-            background: resumeText ? 'rgba(34,197,94,0.05)' : 'var(--bg-1)',
-            borderColor: resumeText ? 'rgba(34,197,94,0.3)' : 'var(--border-2)',
+            padding: '28px', border: '2px dashed var(--border-2)', borderRadius: 12,
+            cursor: creating ? 'wait' : 'pointer',
+            background: 'var(--bg-1)', borderColor: 'var(--border-2)',
+            opacity: creating ? 0.6 : 1,
           }}>
             <input
               type="file"
               accept=".txt,.pdf,.doc,.docx"
               style={{ display: 'none' }}
-              onChange={e => e.target.files?.[0] && handleResumeFile(e.target.files[0])}
+              disabled={creating}
+              onChange={e => e.target.files?.[0] && handleResumeUpload(e.target.files[0])}
             />
-            {resumeLoading ? (
-              <span style={{ fontSize: 13, color: 'var(--text-2)' }}>Reading file...</span>
-            ) : resumeText ? (
-              <span style={{ fontSize: 13, color: 'var(--green, #22c55e)' }}>
-                {resumeFile?.name} ({Math.round(resumeText.length / 1024)}KB)
-              </span>
+            {creating ? (
+              <div style={{ textAlign: 'center' }}>
+                <span style={{ width: 20, height: 20, border: '2px solid var(--accent-25)', borderTopColor: 'var(--accent)', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.7s linear infinite', marginBottom: 8 }} />
+                <p style={{ fontSize: 13, color: 'var(--text-2)' }}>Parsing resume...</p>
+              </div>
             ) : (
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 28, marginBottom: 6 }}>📄</div>
-                <span style={{ fontSize: 13, color: 'var(--text-3)' }}>Drop resume here or click to upload</span>
+                <span style={{ fontSize: 13, color: 'var(--text-3)' }}>Drop resume here or click to upload (.pdf, .docx, .txt)</span>
               </div>
             )}
           </label>
-
-          <button
-            disabled={!resumeText || creating}
-            onClick={handleCreateSession}
-            style={{
-              width: '100%', padding: '13px 20px',
-              background: (!resumeText || creating) ? 'var(--text-3)' : 'var(--accent)',
-              color: '#fff', border: 'none', borderRadius: 10,
-              fontSize: 14, fontWeight: 500, cursor: (!resumeText || creating) ? 'not-allowed' : 'pointer',
-              fontFamily: 'var(--font-body)',
-            }}
-          >
-            {creating ? 'Parsing resume...' : !resumeText ? 'Upload resume to continue' : 'Next'}
-          </button>
         </div>
       </div>
     )
@@ -494,15 +475,16 @@ export default function InterviewPage() {
           </div>
 
           <button
-            onClick={() => setStage('permissions')}
+            disabled={creating}
+            onClick={handleStartInterview}
             style={{
               width: '100%', padding: '13px 20px',
-              background: 'var(--accent)', color: '#fff', border: 'none',
+              background: creating ? 'var(--text-3)' : 'var(--accent)', color: '#fff', border: 'none',
               borderRadius: 10, fontSize: 14, fontWeight: 500,
-              cursor: 'pointer', fontFamily: 'var(--font-body)',
+              cursor: creating ? 'wait' : 'pointer', fontFamily: 'var(--font-body)',
             }}
           >
-            Confirm & Continue
+            {creating ? 'Creating session...' : 'Begin Interview'}
           </button>
         </div>
       </div>

@@ -39,6 +39,37 @@ async def health() -> dict:
     return {"status": "ok", "service": settings.APP_NAME}
 
 
+# ── Resume parsing (separate from session creation) ──────────────────────────
+
+@router.post("/api/parse-resume")
+async def parse_resume_endpoint(
+    file: UploadFile = File(...),
+    user: Annotated[TokenPayload, Depends(get_current_user)] = None,
+) -> dict:
+    """
+    Parse resume file and return structured data.
+    Called BEFORE session creation so user can preview extracted info.
+    Supports PDF, DOCX, TXT.
+    """
+    content = await file.read()
+    if len(content) > 5_000_000:
+        raise HTTPException(413, "File too large. Max 5MB.")
+
+    from app.engines.resume_parser import extract_file_text, parse_resume
+    text = await extract_file_text(content, file.filename or "resume.txt")
+
+    if not text or not text.strip():
+        return {"error": "Could not read resume file.", "resume": None}
+
+    parsed = await parse_resume(text)
+
+    if not parsed or not (parsed.get("skills") or parsed.get("tools") or parsed.get("key_projects")):
+        return {"error": "Could not extract resume details.", "resume": None, "resume_text": text[:3000]}
+
+    parsed["resume_text"] = text[:3000]
+    return {"resume": parsed, "error": None}
+
+
 # ── Session management ────────────────────────────────────────────────────────
 
 class CreateSessionRequest(BaseModel):

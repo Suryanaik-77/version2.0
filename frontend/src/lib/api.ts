@@ -104,6 +104,15 @@ export const authApi = {
 }
 
 export const sessionApi = {
+  // Parse resume file — separate from session creation
+  parseResume: (file: File) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return api.post('/api/parse-resume', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 30000,
+    })
+  },
   // candidate_id comes from JWT on backend — only domain needed in body
   create: (domain: string, resume_text?: string) => api.post('/sessions', { domain, resume_text: resume_text || '' }),
   createWithFile: (domain: string, file: File) => {
