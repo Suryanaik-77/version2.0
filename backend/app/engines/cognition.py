@@ -593,22 +593,29 @@ def _validate_grounding(
     domain_kws = _DOMAIN_KEYWORDS.get(domain, frozenset())
     domain_match_count = sum(1 for kw in domain_kws if kw in t)
 
-    # Check for wrong-domain VLSI content
+    # Check for wrong-domain VLSI content — stricter enforcement
     other_domains = [d for d in VLSIDomain if d != domain]
     other_match_counts = {}
     for other_d in other_domains:
         other_kws = _DOMAIN_KEYWORDS.get(other_d, frozenset())
-        other_match_counts[other_d] = sum(1 for kw in other_kws if kw in t)
+        # Only count keywords UNIQUE to the other domain (not shared)
+        unique_other_kws = other_kws - domain_kws
+        other_match_counts[other_d] = sum(1 for kw in unique_other_kws if kw in t)
 
-    # If another domain matches more strongly than the interview domain
     max_other = max(other_match_counts.values()) if other_match_counts else 0
-    if max_other > domain_match_count and max_other >= 2 and domain_match_count == 0:
-        domain_name = {
-            VLSIDomain.ANALOG_LAYOUT: "analog layout",
-            VLSIDomain.PHYSICAL_DESIGN: "physical design",
-            VLSIDomain.DESIGN_VERIFICATION: "design verification",
-        }.get(domain, "their domain")
-        return f"Candidate is drifting into a different domain. Stay focused on {domain_name}."
+    domain_name = {
+        VLSIDomain.ANALOG_LAYOUT: "analog layout",
+        VLSIDomain.PHYSICAL_DESIGN: "physical design",
+        VLSIDomain.DESIGN_VERIFICATION: "design verification",
+    }.get(domain, "their domain")
+
+    # Even 1 unique other-domain keyword when candidate isn't discussing current domain
+    if max_other >= 1 and domain_match_count == 0:
+        return f"Stay in {domain_name}. Do NOT follow other-domain topics."
+
+    # Other domain matches more strongly — redirect
+    if max_other > domain_match_count and max_other >= 2:
+        return f"Candidate mentioned other-domain concepts. Stay focused on {domain_name}."
 
     # Resume consistency check — does claim match resume level/tools/skills?
     resume_level = cog_state.get("resume_level", "")

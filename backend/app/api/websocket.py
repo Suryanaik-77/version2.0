@@ -32,6 +32,7 @@ from app.api.auth import validate_ws_token
 from app.config import get_settings
 from app.core import redis as r
 from app.core.session import (
+    get_session,
     session_exists,
     end_session,
     SessionNotFoundError,
@@ -233,11 +234,16 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
     
     await hub.connect(session_id, connection_id, websocket, is_admin=is_admin)
 
-    # ── Send opening question immediately ───────────────────────────────────────
-    asyncio.create_task(
-        _send_opening(session_id, connection_id),
-        name=f"opening_{session_id}",
-    )
+    # ── Send opening question ONLY on first connection (not reconnect) ──────────
+    state = await get_session(session_id)
+    if state and state.turn_count == 0:
+        asyncio.create_task(
+            _send_opening(session_id, connection_id),
+            name=f"opening_{session_id}",
+        )
+    else:
+        log.info("ws.skipped_opening_reconnect", session_id=session_id,
+                 turn_count=state.turn_count if state else "no_state")
 
     # ── Launch concurrent tasks ───────────────────────────────────────────────
     receive_task  = asyncio.create_task(_receive_loop(session_id, connection_id, websocket, is_admin))
@@ -514,7 +520,7 @@ async def _handle_text_message(
 
 # Accumulated transcripts per session (for multi-chunk answers)
 _transcript_accum: dict[str, list[str]] = {}
-_turn_counters: dict[str, int] = {}
+# NOTE: _turn_counters is defined above (line ~425). Do NOT redefine here.
 
 
 async def _handle_audio_blob(session_id: str, data: dict) -> None:
