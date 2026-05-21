@@ -490,15 +490,25 @@ export default function InterviewPage() {
             </div>
           )}
 
-          {/* Domain badge */}
+          {/* Domain info */}
           <div style={{
-            display: 'flex', alignItems: 'center', gap: 8,
-            padding: '10px 14px', background: 'var(--bg-1)', borderRadius: 8,
+            padding: '12px 16px', background: 'var(--bg-1)', borderRadius: 10,
             border: '1px solid var(--border-1)', marginBottom: 20,
           }}>
-            <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--accent)', flexShrink: 0 }} />
-            <span style={{ fontSize: 12, color: 'var(--text-2)' }}>Interview Domain:</span>
-            <span style={{ fontSize: 13, color: 'var(--text-0)', fontWeight: 500 }}>{domain}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: parsedResume.domain ? 8 : 0 }}>
+              <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--accent)', flexShrink: 0 }} />
+              <span style={{ fontSize: 12, color: 'var(--text-2)' }}>Interview Domain:</span>
+              <span style={{ fontSize: 13, color: 'var(--text-0)', fontWeight: 500 }}>{domain}</span>
+            </div>
+            {parsedResume.domain && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--green, #22c55e)', flexShrink: 0 }} />
+                <span style={{ fontSize: 12, color: 'var(--text-2)' }}>Detected from resume:</span>
+                <span style={{ fontSize: 13, color: 'var(--green, #22c55e)', fontWeight: 500 }}>
+                  {DOMAIN_LABELS[parsedResume.domain.toUpperCase()] || parsedResume.domain.replace(/_/g, ' ')}
+                </span>
+              </div>
+            )}
           </div>
 
           <button
