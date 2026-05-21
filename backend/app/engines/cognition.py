@@ -28,6 +28,7 @@ from app.config import get_settings
 from app.models.session import (
     CandidateMemory,
     InterviewerMode,
+    ResumeData,
     VLSIDomain,
 )
 
@@ -55,10 +56,14 @@ class CognitionResult:
     transition_target: str | None
     # Candidate portrait
     candidate_portrait: str     # natural language summary of candidate state
-    # Emotional pacing
-    emotional_read: str         # "confident", "nervous", "defensive", "honest", "flat"
+    # Behavioral pacing guidance (replaces raw emotional labels)
+    pacing_hint: str            # e.g. "simplify the question", "let them think", "" (no hint)
     # Interview momentum
     momentum: str               # "accelerating", "steady", "stalling", "recovering"
+    # Signal quality — what has already been verified on current topic
+    verified_context: str       # e.g. "Already verified: mechanism, ownership. Try: debugging, tradeoffs."
+    # Project grounding — specific project to anchor questions to
+    project_grounding: str      # e.g. "They worked on OTA layout for a 28nm tapeout."
 
 
 # ── Redis key ────────────────────────────────────────────────────────────────
@@ -169,6 +174,7 @@ async def assess(
     mode: InterviewerMode,
     memory: CandidateMemory,
     eval_scores: dict | None = None,
+    resume: ResumeData | None = None,
 ) -> CognitionResult:
     """
     Assess the interview state and produce a strategic briefing.
@@ -180,10 +186,21 @@ async def assess(
       - strategic_intent: what to do next (soft guidance, not rigid command)
       - domain_voice: how a domain-native engineer would behave
       - reconnection: earlier statements to reconnect to
-      - emotional_read: candidate's emotional state
+      - pacing_hint: subtle behavioral guidance (not emotional labels)
       - transition_pressure: soft signal (none → consider → recommended → overdue)
+      - verified_context: what signals have already been extracted on current topic
+      - project_grounding: specific project to anchor questions to
     """
     cog_state = await _load_state(session_id)
+
+    # Persist resume data in cognition state (cross-turn availability)
+    if resume and not cog_state.get("resume_stored"):
+        cog_state["resume_projects"] = resume.key_projects[:5]
+        cog_state["resume_tools"] = resume.tools[:6]
+        cog_state["resume_skills"] = resume.skills[:8]
+        cog_state["resume_level"] = resume.level
+        cog_state["resume_name"] = resume.candidate_name
+        cog_state["resume_stored"] = True
 
     # Infer what topic the candidate is talking about
     current_topic = _infer_topic_from_transcript(transcript, domain)
@@ -197,6 +214,14 @@ async def assess(
     # Track what candidate said for semantic reconnection
     _store_semantic_anchor(cog_state, current_topic, transcript, turn_number)
 
+    # Update verified signals — what evaluation dimensions have been extracted
+    from app.engines.memory import detect_verified_signals
+    new_signals = detect_verified_signals(transcript)
+    verified = ts.get("verified_signals", {})
+    for sig in new_signals:
+        verified[sig] = True
+    ts["verified_signals"] = verified
+
     # Update depth and streak from eval scores (previous turn's)
     if eval_scores:
         avg = sum(eval_scores.values()) / len(eval_scores)
@@ -207,7 +232,6 @@ async def assess(
         elif avg < 5.0:
             ts["streak"] = min(-1, ts.get("streak", 0) - 1)
         elif avg >= 5.5:
-            # Partial answer — don't reset streak, just dampen toward 0
             old = ts.get("streak", 0)
             ts["streak"] = old + (1 if old < 0 else -1) if old != 0 else 0
         else:
@@ -218,19 +242,21 @@ async def assess(
     _extract_topic_signals(ts, transcript, memory)
     topic_states[current_topic] = ts
 
-    # Emotional read from transcript patterns
-    emotional_read = _read_emotional_state(transcript, ts, mode)
+    # Behavioral pacing (subtle, not emotional labels)
+    pacing_hint = _compute_pacing_hint(transcript, ts, mode)
 
-    # Transition pressure (soft, graduated)
+    # Transition pressure — signal-quality-driven, not just turn count
     transition_pressure = _compute_transition_pressure(
         ts, mode, topic_states, domain
     )
 
-    # Best transition target (connected topic, not random)
+    # Best transition target (connected topic, preferring resume-mentioned areas)
     transition_target = None
     if transition_pressure in ("recommended", "overdue"):
         transition_target = _pick_connected_target(
-            current_topic, topic_states, domain, memory
+            current_topic, topic_states, domain, memory,
+            resume_projects=cog_state.get("resume_projects", []),
+            resume_skills=cog_state.get("resume_skills", []),
         )
 
     # Momentum
@@ -239,7 +265,7 @@ async def assess(
     # Recommended action (soft — the LLM can override)
     action = _compute_action(
         ts, mode, transition_pressure, momentum, memory,
-        turn_number, emotional_read
+        turn_number, pacing_hint
     )
 
     # Domain-native voice
@@ -250,14 +276,23 @@ async def assess(
         cog_state, current_topic, domain, turn_number
     )
 
+    # Build verified context string (anti-repetition)
+    verified_context = _build_verified_context(ts)
+
+    # Project grounding — find a specific project to anchor to
+    project_grounding = _build_project_grounding(
+        cog_state, current_topic, transcript, domain
+    )
+
     # Strategic intent (natural language)
     strategic_intent = _build_strategic_intent(
         current_topic, ts, action, transition_pressure,
-        transition_target, mode, memory, emotional_read, domain
+        transition_target, mode, memory, pacing_hint, domain,
+        project_grounding, verified_context,
     )
 
     # Candidate portrait
-    candidate_portrait = _build_candidate_portrait(memory, topic_states, emotional_read)
+    candidate_portrait = _build_candidate_portrait(memory, topic_states)
 
     # Persist
     cog_state["topics"] = topic_states
@@ -276,8 +311,10 @@ async def assess(
         transition_pressure=transition_pressure,
         transition_target=transition_target,
         candidate_portrait=candidate_portrait,
-        emotional_read=emotional_read,
+        pacing_hint=pacing_hint,
         momentum=momentum,
+        verified_context=verified_context,
+        project_grounding=project_grounding,
     )
 
 
@@ -347,7 +384,11 @@ def _get_or_create_topic(topic_states: dict, topic: str) -> dict:
             "claims": [],
             "gaps": [],
             "depth_label": "untouched",
+            "verified_signals": {},  # {mechanism: True, ownership: True, ...}
         }
+    # Backfill for existing topics missing the field
+    if "verified_signals" not in topic_states[topic]:
+        topic_states[topic]["verified_signals"] = {}
     return topic_states[topic]
 
 
@@ -460,49 +501,43 @@ def _find_reconnection(
     return f"Earlier (turn {best['turn']}), they said: \"{best['text'][:80]}\" — you can reconnect this to what they're saying now."
 
 
-# ── Emotional state detection ────────────────────────────────────────────────
+# ── Behavioral pacing (subtle, not emotional labels) ────────────────────────
 
-def _read_emotional_state(
+def _compute_pacing_hint(
     transcript: str,
     ts: dict,
     mode: InterviewerMode,
 ) -> str:
     """
-    Heuristic read of candidate's emotional state from transcript patterns.
-    Guides interviewer pacing — don't pressure a nervous candidate,
-    don't go soft on a confident one.
+    Produce subtle behavioral guidance for the interviewer.
+    Never surfaces emotional labels to the LLM.
+    Returns actionable hints like "simplify the question" or "".
     """
     t = transcript.lower()
     word_count = len(transcript.split())
 
-    # Honest admission patterns
+    # Honest admission — simplify, don't pile on
     if any(p in t for p in ["i don't know", "i'm not sure", "not familiar", "haven't worked", "i don't remember"]):
-        return "honest"
+        return "They admitted a gap. Simplify or try a different angle on the same area."
 
-    # Nervous patterns — very short answers, hedging language
+    # Very short / hedging — give space
     hedging = sum(1 for p in ["i think", "maybe", "probably", "i guess", "not exactly sure", "sort of", "kind of"] if p in t)
     if hedging >= 2 or (word_count < 15 and hedging >= 1):
-        return "nervous"
+        if mode in (InterviewerMode.PRESSURE, InterviewerMode.ESCALATING):
+            return "Candidate is hesitant. Back off intensity slightly — ask something achievable."
+        return ""
 
-    # Defensive patterns — deflecting, blaming tools/team
+    # Deflecting — reframe, don't confront
     if any(p in t for p in ["that wasn't my responsibility", "someone else handled", "the tool did", "it was automated"]):
-        return "defensive"
+        return "Candidate deflected ownership. Ask from a different angle — a scenario or 'what would you have done?'"
 
-    # Confident patterns — specific claims, numbers, first-person ownership
-    confident_markers = sum(1 for p in [
-        "i designed", "i implemented", "i built", "i debugged", "i led", "i owned",
-        "i decided", "i chose", "the result was", "we achieved",
-    ] if p in t)
-    if confident_markers >= 2 or (word_count > 60 and confident_markers >= 1):
-        return "confident"
-
-    # Flat — going through the motions, textbook-ish
-    if word_count > 40 and hedging == 0 and confident_markers == 0:
+    # Textbook-sounding — push toward personal experience
+    if word_count > 40 and hedging == 0:
         textbook = any(p in t for p in ["is defined as", "refers to", "is used for", "is a type of", "stands for"])
         if textbook:
-            return "flat"
+            return "Answer sounds textbook. Push toward their actual project — what they specifically did, not what 'is typically done.'"
 
-    return "neutral"
+    return ""
 
 
 # ── Transition pressure (graduated, not binary) ─────────────────────────────
@@ -516,40 +551,51 @@ def _compute_transition_pressure(
     """
     Returns graduated transition pressure: none → consider → recommended → overdue.
 
-    These are SOFT signals. The LLM can stay on topic if the conversation
-    is genuinely productive. But if pressure is "overdue", the strategic
-    intent will strongly suggest moving on.
+    PRIMARY driver: signal quality (how many dimensions verified on this topic).
+    SECONDARY driver: turn count (soft backup, not primary trigger).
+
+    The interviewer should move on when it has ENOUGH SIGNAL, not after N turns.
     """
     turns = ts.get("turns_spent", 0)
     streak = ts.get("streak", 0)
     depth = ts.get("depth_label", "surface")
+    verified = ts.get("verified_signals", {})
+    n_verified = sum(1 for v in verified.values() if v)
 
     # Strategy engine already decided to transition
     if mode == InterviewerMode.TRANSITIONING:
         return "recommended"
 
-    # Topic fully explored — high depth + many turns
-    if turns >= 4 and depth in ("tradeoff", "edge-case"):
-        return "overdue" if turns >= 5 else "recommended"
+    # Signal quality saturation — primary transition trigger
+    # 4+ signals verified: we know mechanism, ownership, tradeoff, debugging etc.
+    if n_verified >= 4:
+        return "overdue"
+    # 3 signals verified: strong recommendation to move on
+    if n_verified >= 3 and turns >= 2:
+        return "recommended"
 
     # Candidate mastered it — strong streak + decent depth
-    if turns >= 3 and streak >= 2 and depth in ("mechanism", "tradeoff", "edge-case"):
+    if streak >= 2 and depth in ("mechanism", "tradeoff", "edge-case") and turns >= 2:
         return "recommended"
 
-    # Candidate struggling persistently — enough signal
-    if turns >= 3 and streak <= -2:
+    # Candidate struggling persistently — enough signal exists
+    if turns >= 2 and streak <= -2:
         return "recommended"
 
-    # Coverage concern — many unexplored topics
+    # Coverage concern — many unexplored topics remain
     domain_topics = _DOMAIN_TOPICS.get(domain, [])
     explored = sum(
         1 for t in domain_topics
         if t in all_topics and all_topics[t].get("turns_spent", 0) > 0
     )
-    if turns >= 3 and explored < len(domain_topics) // 2:
+    if turns >= 2 and explored < len(domain_topics) // 2:
         return "consider"
 
-    # Soft signal — starting to spend a while here
+    # 2+ signals verified — starting to saturate
+    if n_verified >= 2 and turns >= 2:
+        return "consider"
+
+    # Soft signal — spending a while here
     if turns >= 3:
         return "consider"
 
@@ -563,16 +609,40 @@ def _pick_connected_target(
     topic_states: dict,
     domain: VLSIDomain,
     memory: CandidateMemory,
+    resume_projects: list[str] | None = None,
+    resume_skills: list[str] | None = None,
 ) -> str | None:
     """
     Pick next topic that CONNECTS to current topic.
     Uses topic bridge map — transitions feel natural because topics
     are related in the real engineering workflow.
+
+    Priority order:
+      1. Connected topic mentioned in resume (highest realism)
+      2. Connected topic that's a known weakness
+      3. Connected + unexplored
+      4. Resume-mentioned topic (even if not directly connected)
+      5. Any unexplored topic in domain
     """
     bridges = _TOPIC_BRIDGES.get(domain, {}).get(current_topic, [])
     domain_topics = _DOMAIN_TOPICS.get(domain, [])
+    resume_keywords = set()
+    for item in (resume_projects or []) + (resume_skills or []):
+        resume_keywords.update(str(item).lower().split())
 
-    # Priority 1: Connected topic that's also a known weakness
+    def _matches_resume(topic_name: str) -> bool:
+        """Check if a topic relates to something in the resume."""
+        topic_words = set(topic_name.lower().replace("_", " ").split())
+        return bool(topic_words & resume_keywords)
+
+    # Priority 1: Connected topic mentioned in resume
+    for topic in bridges:
+        if _matches_resume(topic):
+            ts = topic_states.get(topic, {})
+            if ts.get("turns_spent", 0) < 2:
+                return topic
+
+    # Priority 2: Connected topic that's a known weakness
     weak_names = {t.topic for t in memory.weak_topics}
     for topic in bridges:
         if topic in weak_names:
@@ -580,23 +650,30 @@ def _pick_connected_target(
             if ts.get("turns_spent", 0) < 2:
                 return topic
 
-    # Priority 2: Connected topic that's unexplored
+    # Priority 3: Connected + unexplored
     for topic in bridges:
         if topic not in topic_states:
             return topic
 
-    # Priority 3: Connected topic that's least-explored
+    # Priority 4: Resume-mentioned topic (even if not directly connected)
+    for topic in domain_topics:
+        if topic != current_topic and _matches_resume(topic):
+            ts = topic_states.get(topic, {})
+            if ts.get("turns_spent", 0) < 2:
+                return topic
+
+    # Priority 5: Connected topic that's least-explored
     for topic in bridges:
         ts = topic_states.get(topic, {})
         if ts.get("turns_spent", 0) < 2:
             return topic
 
-    # Priority 4: Any unexplored topic in domain
+    # Priority 6: Any unexplored topic in domain
     for topic in domain_topics:
         if topic not in topic_states and topic != current_topic:
             return topic
 
-    # Priority 5: Least-explored domain topic
+    # Priority 7: Least-explored domain topic
     least = None
     least_turns = float("inf")
     for topic in domain_topics:
@@ -630,11 +707,14 @@ def _compute_action(
     momentum: str,
     memory: CandidateMemory,
     turn_number: int,
-    emotional_read: str,
+    pacing_hint: str,
 ) -> str:
     """
     Determine recommended action. This is a SUGGESTION — the LLM
     may choose differently based on conversational context.
+
+    Emotional awareness is folded into pacing_hint (passed to strategic intent)
+    rather than driving separate action types. This prevents therapeutic behavior.
     """
     # Hard transition signal
     if transition_pressure == "overdue":
@@ -646,18 +726,16 @@ def _compute_action(
 
     streak = ts.get("streak", 0)
     depth = ts.get("depth_label", "surface")
+    verified = ts.get("verified_signals", {})
+    n_verified = sum(1 for v in verified.values() if v)
 
-    # Emotional overrides — match interviewer to candidate state
-    if emotional_read == "honest":
-        return "encourage"  # they admitted a gap — be human, then simplify
-    if emotional_read == "nervous" and mode in (InterviewerMode.PRESSURE, InterviewerMode.ESCALATING):
-        return "ease"  # back off pressure on nervous candidate
-    if emotional_read == "defensive":
-        return "reframe"  # don't confront, ask from a different angle
-
-    # Soft transition
+    # Soft transition — enough signal collected
     if transition_pressure == "recommended":
         return "transition"
+
+    # Signal-quality-driven: if concept + mechanism verified, try project/debugging
+    if n_verified >= 2 and "debugging" not in verified and "project_specific" not in verified:
+        return "project_ground"  # push toward project-specific or debugging
 
     # Strength-based actions
     if streak >= 2 and depth in ("surface", "mechanism"):
@@ -694,11 +772,90 @@ def _get_domain_voice(domain: VLSIDomain, action: str) -> str:
     key_map = {
         "probe": "probe", "deepen": "deepen", "simplify": "simplify",
         "pressure": "pressure", "escalate": "pressure",
-        "transition": "transition", "encourage": "simplify",
-        "ease": "simplify", "reframe": "probe",
+        "transition": "transition", "project_ground": "pressure",
     }
     key = key_map.get(action, "probe")
     return voices.get(key, "")
+
+
+# ── Verified signal context (anti-repetition) ──────────────────────────────
+
+def _build_verified_context(ts: dict) -> str:
+    """
+    Build a concise string describing what signals have been verified on this topic.
+    Injected into the prompt so the LLM avoids asking semantically similar questions.
+    """
+    verified = ts.get("verified_signals", {})
+    if not verified:
+        return ""
+
+    done = [k for k, v in verified.items() if v]
+    if not done:
+        return ""
+
+    all_dims = ["concept", "mechanism", "ownership", "tradeoff", "implementation", "debugging", "project_specific"]
+    remaining = [d for d in all_dims if d not in done]
+
+    parts = []
+    if done:
+        parts.append(f"Already verified: {', '.join(done)}.")
+    if remaining:
+        parts.append(f"Try next: {', '.join(remaining[:3])}.")
+
+    return " ".join(parts)
+
+
+# ── Project grounding ───────────────────────────────────────────────────────
+
+def _build_project_grounding(
+    cog_state: dict,
+    current_topic: str,
+    transcript: str,
+    domain: VLSIDomain,
+) -> str:
+    """
+    Find a specific project or experience from the resume/conversation
+    to anchor questions to. Prevents generic questioning.
+    """
+    projects = cog_state.get("resume_projects", [])
+    tools = cog_state.get("resume_tools", [])
+    level = cog_state.get("resume_level", "")
+
+    # Check if candidate mentioned a specific project in their answer
+    t = transcript.lower()
+    project_phrases = [
+        "project", "tapeout", "tape-out", "chip", "block", "ip",
+        "product", "design", "soc", "asic",
+    ]
+    candidate_mentioned_project = any(p in t for p in project_phrases)
+
+    parts = []
+
+    # If candidate mentioned a project, encourage following up on it
+    if candidate_mentioned_project:
+        parts.append("They mentioned a specific project — follow up on what they actually did there.")
+
+    # If resume has projects, suggest grounding
+    if projects:
+        # Pick the project most related to current topic
+        topic_lower = current_topic.lower().replace("_", " ")
+        best_project = None
+        for proj in projects:
+            if any(word in str(proj).lower() for word in topic_lower.split()):
+                best_project = proj
+                break
+        if best_project:
+            parts.append(f"Their resume mentions '{best_project}' — connect to that.")
+        elif projects:
+            parts.append(f"They worked on: {', '.join(str(p) for p in projects[:2])}.")
+
+    # If resume has tools relevant to discussion
+    if tools:
+        tools_lower = [str(t).lower() for t in tools]
+        if any(t in transcript.lower() for t in tools_lower):
+            parts.append("They mentioned tools from their resume — ask how they specifically used them.")
+
+    return " ".join(parts) if parts else ""
 
 
 # ── Strategic intent builder ─────────────────────────────────────────────────
@@ -711,77 +868,82 @@ def _build_strategic_intent(
     transition_target: str | None,
     mode: InterviewerMode,
     memory: CandidateMemory,
-    emotional_read: str,
+    pacing_hint: str,
     domain: VLSIDomain,
+    project_grounding: str = "",
+    verified_context: str = "",
 ) -> str:
     """
     Build natural-language strategic briefing.
-    Written as soft guidance ("consider", "you might"), not rigid commands.
+    Written as soft guidance — reads like a colleague's note, not a system command.
+    Transitions reference conversation content, not topic labels.
     """
     turns = ts.get("turns_spent", 0)
     streak = ts.get("streak", 0)
     depth = ts.get("depth_label", "surface")
     gaps = ts.get("gaps", [])
     claims = ts.get("claims", [])
+    verified = ts.get("verified_signals", {})
 
     parts = []
 
-    # Action guidance (soft language)
+    # Action guidance (conversational language, never system-directive)
     if action == "transition":
         if transition_target:
-            # Find the bridge between topics
             bridges = _TOPIC_BRIDGES.get(domain, {}).get(topic, [])
             if transition_target in bridges:
-                parts.append(f"You've explored {topic} well ({turns} turns). {transition_target} connects naturally here — bridge through what they said.")
+                parts.append(f"You have enough signal on {topic}. {transition_target} connects naturally — bridge through something they said earlier.")
             else:
-                parts.append(f"Time to shift from {topic}. Move to {transition_target} — connect it to something from their background.")
+                parts.append(f"You have enough signal on {topic}. Shift toward {transition_target} by connecting it to their background or a project they mentioned.")
         else:
-            parts.append(f"You've spent enough time on {topic}. Shift to a different area naturally.")
+            parts.append(f"You have enough signal on {topic}. Pick up on something else from their background.")
+
+    elif action == "project_ground":
+        parts.append(f"You've covered the concept on {topic}. Now ask about their actual project — what they specifically did, what went wrong, what decisions they made.")
 
     elif action == "deepen":
-        parts.append(f"They're handling {topic} well. Go deeper — tradeoffs, edge cases, what breaks under pressure.")
+        parts.append(f"They're solid on {topic}. Push toward tradeoffs, debugging, or what breaks under real constraints.")
 
     elif action == "simplify":
-        parts.append(f"They're struggling with {topic}. Simplify — ask from a more basic angle or narrow the scope.")
+        parts.append(f"They're struggling. Narrow the scope or ask from a more basic angle.")
 
     elif action == "pressure":
         unresolved = [c for c in memory.contradictions if not c.resolved]
         if unresolved:
             c = unresolved[0]
-            parts.append(f'They said "{c.statement_a[:50]}" but also "{c.statement_b[:50]}". Surface this calmly — don\'t accuse.')
+            parts.append(f'They said "{c.statement_a[:50]}" but also "{c.statement_b[:50]}". Surface this calmly.')
         else:
-            parts.append(f"Push for specifics on {topic}. Ask for numbers, personal decisions, or what went wrong.")
+            parts.append(f"Push for specifics — numbers, personal decisions, or what actually failed.")
 
     elif action == "escalate":
-        parts.append(f"Answer was surface-level. Push past the buzzwords — ask for the actual mechanism or their specific contribution.")
-
-    elif action == "encourage":
-        parts.append("They admitted a gap honestly. Acknowledge briefly ('That's fair.'), then offer a simpler angle on the same topic or move to something they're more comfortable with.")
-
-    elif action == "ease":
-        parts.append("Candidate seems nervous. Back off intensity. Ask something achievable. Let them rebuild confidence before probing again.")
-
-    elif action == "reframe":
-        parts.append("Candidate is getting defensive. Don't push harder — ask the same concept from a different angle. Use a scenario instead of a direct question.")
+        parts.append(f"Answer was surface-level. Ask for the mechanism, their specific contribution, or what happened in practice.")
 
     else:
-        parts.append(f"Continue on {topic}. Follow up naturally on what they just said.")
+        parts.append(f"Follow up naturally on what they just said about {topic}.")
 
-    # Depth awareness (prevents re-asking ground already covered)
-    if depth in ("mechanism", "tradeoff") and streak >= 1:
-        parts.append(f"You've already covered {depth}-level ground here — don't re-ask basics.")
+    # Pacing hint (subtle behavioral guidance, replaces emotional labels)
+    if pacing_hint:
+        parts.append(pacing_hint)
+
+    # Verified signals anti-repetition
+    if verified_context:
+        parts.append(verified_context)
+
+    # Project grounding
+    if project_grounding and action not in ("transition",):
+        parts.append(project_grounding)
 
     # Gaps to probe (when appropriate)
-    if gaps and action in ("pressure", "escalate", "deepen"):
+    if gaps and action in ("pressure", "escalate", "deepen", "project_ground"):
         parts.append(f"Known gap: {gaps[0]}.")
 
-    # Claims to test (when appropriate)
+    # Claims to test
     if claims and action in ("pressure", "deepen"):
-        parts.append(f'They claimed: "{claims[-1][:60]}" — see if this holds under scrutiny.')
+        parts.append(f'They claimed: "{claims[-1][:60]}" — see if this holds.')
 
-    # Transition consideration (soft signal, not override)
+    # Soft transition consideration
     if transition_pressure == "consider" and action != "transition":
-        parts.append(f"You've been on {topic} for {turns} turns — consider moving on soon if you have enough signal.")
+        parts.append("You may have enough signal here — consider moving on soon.")
 
     return " ".join(parts)
 
@@ -791,9 +953,9 @@ def _build_strategic_intent(
 def _build_candidate_portrait(
     memory: CandidateMemory,
     topic_states: dict,
-    emotional_read: str,
 ) -> str:
-    """Natural-language summary of candidate's state and trajectory."""
+    """Natural-language summary of candidate's knowledge state and coverage.
+    No emotional labels — only factual observations."""
     parts = []
 
     # Strong areas
@@ -820,10 +982,6 @@ def _build_candidate_portrait(
     repeated_bw = [b.term for b in memory.buzzwords if b.count >= 3]
     if repeated_bw:
         parts.append(f"Repeats without depth: {', '.join(repeated_bw[:3])}.")
-
-    # Emotional context
-    if emotional_read in ("nervous", "defensive", "honest"):
-        parts.append(f"Current demeanor: {emotional_read}.")
 
     return " ".join(parts) if parts else ""
 

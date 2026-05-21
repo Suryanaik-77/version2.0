@@ -163,6 +163,105 @@ def extract_claims_fast(transcript: str) -> list[str]:
     return claims[:3]  # cap at 3 per turn
 
 
+def detect_verified_signals(transcript: str) -> list[str]:
+    """
+    Detect which evaluation signals are present in the candidate's answer.
+    Used by cognition to track what has already been verified per topic.
+    Prevents semantic looping: once mechanism/ownership/tradeoff are verified,
+    the interviewer should probe a different dimension.
+
+    Returns list of signal names from:
+      concept, mechanism, ownership, tradeoff, implementation, debugging, project_specific
+    """
+    t = transcript.lower()
+    signals = []
+
+    # Mechanism: candidate explained HOW something works
+    mechanism_markers = [
+        "because", "due to", "caused by", "the reason", "what happens is",
+        "the mechanism", "physically", "at the device level", "the way it works",
+        "this causes", "this leads to", "the effect is", "results in",
+    ]
+    if sum(1 for m in mechanism_markers if m in t) >= 2:
+        signals.append("mechanism")
+
+    # Ownership: candidate described personal contribution
+    ownership_markers = [
+        "i designed", "i built", "i implemented", "i owned", "i led",
+        "i debugged", "i decided", "i chose", "my responsibility",
+        "i was responsible", "i handled", "i ran", "i worked on",
+        "i created", "i optimized", "i fixed",
+    ]
+    if any(m in t for m in ownership_markers):
+        signals.append("ownership")
+
+    # Tradeoff: candidate discussed competing concerns
+    tradeoff_markers = [
+        "tradeoff", "trade-off", "versus", "at the cost of", "but the downside",
+        "instead of", "rather than", "compromise", "balance between",
+        "if you do that then", "the disadvantage", "on the other hand",
+    ]
+    if any(m in t for m in tradeoff_markers):
+        signals.append("tradeoff")
+
+    # Implementation: candidate described specific steps/flow
+    implementation_markers = [
+        "the flow is", "first i", "then i", "the steps were",
+        "i ran", "the tool", "i set", "the constraint", "the command",
+        "the script", "the methodology", "the process was",
+    ]
+    if any(m in t for m in implementation_markers):
+        signals.append("implementation")
+
+    # Debugging: candidate described finding/fixing issues
+    debugging_markers = [
+        "debug", "root cause", "the issue was", "the problem was",
+        "i found that", "it turned out", "the failure was",
+        "the fix was", "i traced", "i narrowed", "the waveform showed",
+        "the log showed", "after investigating",
+    ]
+    if any(m in t for m in debugging_markers):
+        signals.append("debugging")
+
+    # Project-specific: candidate referenced a specific project/block/chip
+    project_markers = [
+        "on that project", "in my project", "on the block", "on that chip",
+        "on the tapeout", "in that design", "for that product",
+        "at my previous", "at my company", "on that ip",
+    ]
+    if any(m in t for m in project_markers):
+        signals.append("project_specific")
+
+    # Concept: only if none of the above (basic definitional answer)
+    if not signals:
+        signals.append("concept")
+
+    return signals
+
+
+def detect_probing_dimension(question_text: str) -> str:
+    """
+    Detect what dimension an interviewer question targets.
+    Used to prevent asking semantically similar questions.
+    Returns one of: concept, mechanism, ownership, tradeoff, implementation, debugging, project_specific
+    """
+    q = question_text.lower()
+
+    if any(p in q for p in ["how did you debug", "what failed", "root cause", "what went wrong", "what broke", "how did you fix", "how did you isolate"]):
+        return "debugging"
+    if any(p in q for p in ["in your project", "on your block", "on that design", "your tapeout", "your actual", "specifically did you"]):
+        return "project_specific"
+    if any(p in q for p in ["tradeoff", "trade-off", "at the cost", "what did you sacrifice", "what's the downside", "versus", "alternative"]):
+        return "tradeoff"
+    if any(p in q for p in ["who decided", "your role", "did you or", "your responsibility", "who owned", "your call"]):
+        return "ownership"
+    if any(p in q for p in ["your flow", "what steps", "how did you run", "what tool", "what command", "walk me through your process"]):
+        return "implementation"
+    if any(p in q for p in ["how does", "why does", "mechanism", "physically", "at the device level", "what causes", "explain how"]):
+        return "mechanism"
+    return "concept"
+
+
 def extract_numbers_fast(transcript: str) -> list[NumberRecord]:
     """Extract stated metrics/numbers for memory tracking."""
     # Match: "<number><unit> <context_word>"

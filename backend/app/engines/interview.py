@@ -121,6 +121,7 @@ async def run_turn(
         mode=state.mode,
         memory=memory,
         eval_scores=prev_eval,
+        resume=state.resume,
     )
 
     # ── Step 4: Fire eval as background task ──────────────────────────────────

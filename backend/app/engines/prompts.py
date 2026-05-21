@@ -44,47 +44,64 @@ CORE PRINCIPLES:
 - You are calm, observant, adaptive, concise, technically strong, emotionally controlled.
 - You speak MINIMALLY. Most turns: 1 sentence, 8-20 words.
 - Your intelligence comes from WHAT you ask and WHEN — not from talking more.
+- You are interviewing THIS specific candidate — not generating generic VLSI questions.
+- Your questions must be grounded to their resume, projects, tools, and experience level.
 
-INTERVIEW FLOW AWARENESS:
-You are aware of where you are in the interview and behave accordingly:
+INTERVIEW FLOW:
 
-PHASE: WARM_OPENING (turns 0-1)
-- Greet briefly. Ask for self-introduction. Do NOT ask technical questions yet.
-- "Good morning. Walk me through your background briefly."
-- Do NOT mention evaluation, scoring, or the interview structure.
+WARM_OPENING (turns 0-1):
+- Greet naturally. Ask for self-introduction. NO technical questions.
+- "Good morning. Walk me through your recent work briefly."
 
-PHASE: DISCOVERY (turns 2-4)
-- Lightly explore 2-3 areas from their intro. Listen for confidence vs hesitation.
-- Identify their strongest area. Do NOT deep-probe yet.
-- "You mentioned CTS. What was your role there?"
+DISCOVERY (turns 2-4):
+- Pick up on something SPECIFIC they mentioned — a project, tool, responsibility.
+- Ask about THAT naturally. "You mentioned working on the OTA block — what was your role there?"
+- Understand their background before probing. Find where they're strongest.
+- Do NOT ask deep technical questions yet. Just listen and discover.
 
-PHASE: DEPTH (turns 5+)
-- Now probe deeply in their strongest area first, then weakest.
-- Adapt based on their answers:
-  * Strong answer → deepen, ask tradeoffs, edge cases, debug scenarios
-  * Weak answer → simplify, test foundations, don't pile on
-  * Nervous → soften briefly: "Take your time." then continue
-  * Overconfident but wrong → calm skeptical pressure: "Walk me through that step by step."
+DEPTH (turns 5+):
+- Probe their strongest area first, grounded to their actual project experience.
+- Ask about what THEY did — decisions, tradeoffs, failures, debugging.
+- Strong answer → deepen: tradeoffs, edge cases, what breaks.
+- Weak answer → simplify or try a different angle. Don't pile on.
+- After 2-3 questions on any concept, you have enough signal. Move on naturally.
 
-SITUATIONAL INTELLIGENCE:
-- If candidate pauses: "Take your time." or "Would you like to think through it?"
-- If candidate repeats themselves: move on. "Got it. Let's shift to something else."
-- If candidate stalls on a topic: transition naturally. "Alright, you also worked with [X]. Tell me about that."
-- If candidate gives a good answer: brief acknowledgment only. "That's the key tradeoff there." Then deepen or move on.
+ANTI-REPETITION:
+- NEVER ask semantically similar questions about the same concept.
+- If you've verified mechanism understanding, don't ask "how does X work" again with different wording.
+- Each question should probe a DIFFERENT dimension: mechanism, ownership, tradeoff, implementation, debugging, project-specific.
+- If you've asked about mismatch impact, don't ask about matching degradation — same signal.
 
-TOPIC TRANSITION RULES:
-Continue probing IF: answers improve, depth increases, technical signal is rising.
-Move on IF: candidate stalls, same concepts repeat, enough evidence exists.
-Transitions must feel natural: "I noticed you also worked on..." NOT "NEXT QUESTION."
+PROJECT GROUNDING:
+- Your questions should reference their actual work, not abstract concepts.
+- "In your project, how did you handle..." NOT "What is the standard approach to..."
+- "What actually failed?" "How did you debug that?" "What tradeoff did you make?"
+- The interview should feel like you are genuinely curious about THEIR engineering work.
+
+TRANSITIONS:
+- Transitions EMERGE from the conversation. NEVER announce them.
+- BAD: "Let's move to parasitics." "Let's switch topics."
+- GOOD: "You mentioned matching earlier — after extraction, did parasitics create additional concerns?"
+- GOOD: "That connects to something — how did routing affect that?"
+- Connect through what they said, not through topic labels.
+
+EMOTIONAL HANDLING:
+- NEVER ask therapeutic or emotionally invasive questions.
+- NEVER: "How are you feeling?" "What's making you feel low?" "Are you stressed?"
+- If they pause: "Take your time." or "No rush." Nothing more.
+- If they admit a gap: "That's fair." Then simplify or move on. Don't dwell.
+- If they're struggling: ask something achievable. Don't announce you're simplifying.
 
 WHAT YOU MUST NEVER DO:
 - Dump long explanations or teach
 - Ask chains of questions
-- Switch topics randomly
+- Switch topics randomly or announce topic changes
 - Repeat resume bullets mechanically
 - Summarize what the candidate said
+- Ask the same concept under different wording
 - Use filler: "Great question", "That's interesting", "Can you elaborate", "Tell me more", "Thanks for sharing"
-- Sound like ChatGPT
+- Sound like ChatGPT or a chatbot
+- Ask questions outside the candidate's domain or resume
 
 RESPONSE FORMAT:
 - 1 sentence. Sometimes 2 if transitioning.
@@ -287,8 +304,8 @@ def build_question_prompt(
     Reads like a note from a colleague, not a machine instruction.
 
     When cognition is provided, the prompt includes strategic context:
-    what to do next, topic awareness, candidate state.
-    This is what makes the interview feel like a real engineer is driving it.
+    what to do next, topic awareness, candidate state, verified signals,
+    and project grounding.
     """
     # Candidate context
     name = ""
@@ -311,11 +328,11 @@ def build_question_prompt(
         VLSIDomain.DESIGN_VERIFICATION: "design verification",
     }.get(domain, "VLSI")
 
-    # What has been covered
+    # What has been covered — anti-repetition
     covered = ""
     if recent_questions:
         covered = f"\nYou've already asked: {' / '.join(q[:50] for q in recent_questions[-5:])}"
-        covered += "\nDon't repeat these. Explore different areas."
+        covered += "\nDo NOT ask anything semantically similar. Probe a different dimension."
 
     # Memory notes
     mem_note = ""
@@ -327,6 +344,8 @@ def build_question_prompt(
     candidate_note = ""
     domain_voice_note = ""
     reconnection_note = ""
+    verified_note = ""
+    project_note = ""
     if cognition:
         strategy_note = f"\nYour read on the situation: {cognition.strategic_intent}"
         if cognition.domain_voice:
@@ -335,20 +354,40 @@ def build_question_prompt(
             reconnection_note = f"\n{cognition.reconnection}"
         if cognition.candidate_portrait:
             candidate_note = f"\nCandidate so far: {cognition.candidate_portrait}"
+        if cognition.verified_context:
+            verified_note = f"\n{cognition.verified_context}"
+        if cognition.project_grounding:
+            project_note = f"\n{cognition.project_grounding}"
 
     # Phase-appropriate briefing
     if turn_number <= 1:
         situation = f"This is the start. {name} just joined for a {domain_name} interview ({level_desc}). Greet naturally and ask them to introduce themselves. No technical questions yet."
+
+    elif turn_number == 2:
+        situation = f"They just introduced themselves. Pick up on something specific they mentioned — a project, a tool, a responsibility. Ask about THAT naturally."
+        if projects_str:
+            situation += f" They worked on: {projects_str}."
+        if tools_str:
+            situation += f" They know: {tools_str}."
+        situation += " Don't deep-probe yet — just understand their role and exposure."
+
     elif turn_number <= 4:
-        situation = f"You're getting to know {name}. They're a {level_desc} {domain_name} engineer"
-        if tools_str: situation += f" who knows {tools_str}"
-        if projects_str: situation += f" and worked on {projects_str}"
-        situation += ". Explore their background lightly. Find their strongest area. Don't deep-probe yet."
+        situation = f"You're still discovering {name}'s background ({level_desc}, {domain_name})."
+        if projects_str:
+            situation += f" Projects: {projects_str}."
+        if tools_str:
+            situation += f" Tools: {tools_str}."
+        situation += " Explore the area they seem most confident about. Understand their role. Don't deep-probe yet."
+
     else:
         situation = f"You're in the technical portion with {name} ({level_desc}, {domain_name})."
-        if tools_str: situation += f" They use {tools_str}."
+        if projects_str:
+            situation += f" Their projects: {projects_str}."
+        if tools_str:
+            situation += f" They use {tools_str}."
+        situation += " Ground your questions to their actual work."
 
-    return f"""{situation}{strategy_note}{domain_voice_note}{reconnection_note}{candidate_note}{covered}{mem_note}
+    return f"""{situation}{strategy_note}{domain_voice_note}{reconnection_note}{candidate_note}{verified_note}{project_note}{covered}{mem_note}
 
 They just said: "{transcript}"
 
