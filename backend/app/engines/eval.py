@@ -131,6 +131,14 @@ async def run_async_eval(
                 avg_score=round(avg, 1),
             )
 
+        # Step 5b: Store eval scores for cognition layer (next turn reads these)
+        rds = r._get_pool()
+        await rds.setex(
+            f"session:{session_id}:eval:{turn_number}",
+            settings.SESSION_TTL,
+            json.dumps(scores),
+        )
+
         # Step 6: Update consecutive counts
         await _set_consecutive_counts(session_id, consecutive_weak, consecutive_strong)
 

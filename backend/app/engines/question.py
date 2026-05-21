@@ -53,6 +53,7 @@ _SENTENCE_END = re.compile(r'[.?!](\s|$)')
 async def stream(
     ctx: TurnContext,
     tracker: TurnLatencyTracker | None = None,
+    cognition: "CognitionResult | None" = None,
 ) -> AsyncIterator[str]:
     """
     Core hot-path function.
@@ -70,31 +71,20 @@ async def stream(
       - First token yield: < 400ms from this function being called
       - First sentence complete: < 800ms
     """
-    # Topic selection — pure CPU, < 0.1ms
-    from app.engines.taxonomy import pick_next_topic
-    topic_coverage = ctx.memory.model_dump().get("_topic_coverage", {}) if ctx.memory else {}
-    last_topic = ctx.memory.model_dump().get("_last_topic", "") if ctx.memory else ""
-    chosen_topic, concept = pick_next_topic(
-        domain=ctx.domain.value,
-        coverage=topic_coverage,
-        turn_count=ctx.turn_number,
-        last_topic=last_topic,
-    )
-
-    # Build prompt — pure CPU work, < 1ms
+    # Build prompt — no forced topics, let the interviewer decide naturally
     memory_context = mem.compress_for_injection(ctx.memory)
     recent_qs = await _get_recent_questions_from_redis(ctx.session_id)
     if not recent_qs:
-        recent_qs = _get_recent_questions(ctx)  # fallback
+        recent_qs = _get_recent_questions(ctx)
+
     prompt = build_question_prompt(
-        mode=ctx.mode,
-        domain=ctx.domain,
         transcript=ctx.transcript,
+        domain=ctx.domain,
+        resume=ctx.resume.model_dump() if ctx.resume else None,
         memory_context=memory_context,
         recent_questions=recent_qs,
-        resume=ctx.resume.model_dump() if ctx.resume else None,
-        topic_hint=f"Topic: {chosen_topic.replace('_', ' ')} — {concept.description}",
         turn_number=ctx.turn_number,
+        cognition=cognition,
     )
 
     # Debug: log what the LLM actually sees
@@ -104,7 +94,6 @@ async def stream(
              mode=ctx.mode.value,
              transcript_len=len(ctx.transcript),
              transcript_preview=ctx.transcript[:100] if ctx.transcript else "(empty)",
-             topic=chosen_topic,
              recent_qs_count=len(recent_qs),
              prompt_len=len(prompt))
 
@@ -173,7 +162,6 @@ async def stream(
             question_text = "".join(accumulated).strip()
             try:
                 await _store_generated_question(ctx.session_id, ctx.turn_number, question_text)
-                await _update_topic_coverage(ctx.session_id, chosen_topic)
             except Exception as e:
                 log.warning("question.store_failed", error=str(e))
             # Context update can be background
@@ -294,28 +282,6 @@ def _get_recent_questions(ctx: TurnContext) -> list[str]:
     """Extract recent questions from prior answers (fallback)."""
     return [a for a in ctx.prior_answers if a] if ctx.prior_answers else []
 
-
-async def _update_topic_coverage(session_id: str, topic: str) -> None:
-    """Update topic coverage count in Redis memory. Non-blocking."""
-    try:
-        memory = await mem.get_snapshot(session_id)
-        if memory is None:
-            return
-        d = memory.model_dump()
-        coverage = d.get("_topic_coverage", {})
-        coverage[topic] = coverage.get(topic, 0) + 1
-        d["_topic_coverage"] = coverage
-        d["_last_topic"] = topic
-        # Write back — we're updating raw dict fields not in the Pydantic model
-        rds = r._get_pool()
-        import json
-        def _default(o):
-            if hasattr(o, 'isoformat'):
-                return o.isoformat()
-            return str(o)
-        await rds.setex(f"memory:{session_id}", 14400, json.dumps(d, default=_default))
-    except Exception as e:
-        log.warning("topic_coverage.update_failed", error=str(e))
 
 
 # ── Fallback question (LLM failure path) ─────────────────────────────────────

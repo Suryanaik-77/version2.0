@@ -273,125 +273,86 @@ def _corpus_example_block(
 # ── Main assembly function ────────────────────────────────────────────────────
 
 def build_question_prompt(
-    mode: InterviewerMode,
-    domain: VLSIDomain,
     transcript: str,
-    memory_context: str,
-    recent_questions: list[str],
-    signals: InlineSignals | None = None,
-    consecutive_weak: int = 0,
-    consecutive_strong: int = 0,
+    domain: VLSIDomain,
     resume: dict | None = None,
-    topic_hint: str = "",
+    memory_context: str = "",
+    recent_questions: list[str] | None = None,
     turn_number: int = 0,
+    cognition=None,
+    **kwargs,  # absorb extra args without breaking
 ) -> str:
     """
-    Deterministic rule-based prompt assembly.
+    Build a conversational briefing — NOT a config block.
+    Reads like a note from a colleague, not a machine instruction.
 
-    Token budget target: < 500 tokens total (system + user).
-    Assembly order:
-      1. Domain label + candidate profile
-      2. Seniority calibration
-      3. Mode label + tone rules
-      3. Signal modifier (if any)
-      4. Eval trend note (if 2+ consecutive same result)
-      5. Memory block (if any, with token budget enforcement)
-      6. Corpus example (1 example, mode/signal-matched)
-      7. Anti-repetition block
-      8. Candidate answer
-      9. Question prompt
+    When cognition is provided, the prompt includes strategic context:
+    what to do next, topic awareness, candidate state.
+    This is what makes the interview feel like a real engineer is driving it.
     """
-    tone = _MODE_TONE_RULES[mode]
-
-    # Build mode label with optional hint
-    mode_label = tone["label"]
-    if tone["hint"]:
-        mode_label += f"\nTone hint: {tone['hint']}"
-
-    # Signal modifier — empty string if nothing to inject
-    signal_block = _signal_modifier(signals)
-
-    # Eval trend — empty string if no clear pattern
-    trend_block = _eval_trend_note(consecutive_weak, consecutive_strong)
-
-    # Memory block — empty string if no context
-    memory_block = build_memory_block(memory_context)
-
-    # Corpus example — always 1, ~30 tokens
-    example_block = _corpus_example_block(mode, signals)
-
-    # Resume block — candidate profile for personalized questions
-    resume_block = ""
+    # Candidate context
+    name = ""
+    level_desc = ""
+    tools_str = ""
+    projects_str = ""
     if resume:
-        name = resume.get("candidate_name", "")
-        level = resume.get("level", "").replace("_", " ")
-        years = resume.get("years_experience", "")
-        tools = ", ".join(resume.get("tools", [])[:5]) or ""
-        projects = ", ".join(resume.get("key_projects", [])[:3]) or ""
-        skills = ", ".join(resume.get("skills", [])[:8]) or ""
-        parts = [f"CANDIDATE: {name}" if name else ""]
-        if level or years:
-            parts.append(f"{level} | {years} years" if years else level)
-        if tools:
-            parts.append(f"Tools: {tools}")
-        if projects:
-            parts.append(f"Projects: {projects}")
-        if skills:
-            parts.append(f"Skills: {skills}")
-        resume_block = " | ".join(p for p in parts if p)
-
-    # Seniority calibration — adjusts expectations
-    seniority_block = ""
-    if resume:
-        level = resume.get("level", "")
+        raw_name = resume.get("candidate_name", "")
+        parts = (raw_name or "").strip().split()
+        name = parts[1] if len(parts) > 2 else (parts[0] if parts else "the candidate")
+        level = resume.get("level", "fresher").replace("_", " ")
         years = resume.get("years_experience", 0)
-        if level in ("fresh_graduate", "trained_fresher") or (years and float(years) < 1):
-            seniority_block = "SENIORITY: Fresher. Expect definitions and basic concepts. Be slightly patient. Don't expect tool commands or numbers."
-        elif level == "experienced_junior" or (years and 1 <= float(years) <= 3):
-            seniority_block = "SENIORITY: Junior (1-3 years). Expect tool awareness and practical experience. Ask what they've seen, not just what they know."
-        elif level == "experienced_senior" or (years and float(years) > 3):
-            seniority_block = "SENIORITY: Senior (3+ years). Expect depth, numbers, trade-offs, failure stories. No tolerance for surface-level answers."
+        level_desc = f"{level}, {years} years" if years else level
+        tools_str = ", ".join(str(t) for t in resume.get("tools", [])[:4])
+        projects_str = ", ".join(str(p) for p in resume.get("key_projects", [])[:3])
 
-    # Phase awareness — what stage of the interview are we in
-    phase_block = ""
-    if turn_number <= 1:
-        phase_block = "PHASE: WARM OPENING. Ask about background. Do NOT ask technical questions yet."
-    elif turn_number <= 4:
-        phase_block = "PHASE: DISCOVERY. Lightly explore areas they mentioned. Listen for confidence. Do NOT deep-probe yet."
-    elif consecutive_weak >= 2:
-        phase_block = "PHASE: SUPPORT. Candidate is struggling. Simplify. Ask foundations. Don't pile on."
-    elif consecutive_strong >= 2:
-        phase_block = "PHASE: DEEP PROBING. Candidate is strong. Push to edge cases, tradeoffs, debugging."
-    else:
-        phase_block = "PHASE: ADAPTIVE DEPTH. Probe based on their last answer quality."
+    domain_name = {
+        VLSIDomain.ANALOG_LAYOUT: "analog layout",
+        VLSIDomain.PHYSICAL_DESIGN: "physical design",
+        VLSIDomain.DESIGN_VERIFICATION: "design verification",
+    }.get(domain, "VLSI")
 
-    # Anti-repetition — last 5 questions
-    avoid_block = ""
+    # What has been covered
+    covered = ""
     if recent_questions:
-        avoid_block = "\nDO NOT repeat:\n" + "\n".join(f"- {q}" for q in recent_questions[-5:])
+        covered = f"\nYou've already asked: {' / '.join(q[:50] for q in recent_questions[-5:])}"
+        covered += "\nDon't repeat these. Explore different areas."
 
-    # Assemble — blocks that are empty strings contribute nothing
-    blocks = filter(None, [
-        f"DOMAIN: {_domain_label(domain)}",
-        resume_block,
-        seniority_block,
-        phase_block,
-        topic_hint,
-        f"MODE: {mode_label}",
-        signal_block,
-        trend_block,
-        memory_block,
-        example_block,
-        avoid_block,
-    ])
+    # Memory notes
+    mem_note = ""
+    if memory_context and memory_context.strip():
+        mem_note = f"\nNotes from earlier: {memory_context[:200]}"
 
-    header = "\n".join(blocks)
+    # Cognition-driven context
+    strategy_note = ""
+    candidate_note = ""
+    domain_voice_note = ""
+    reconnection_note = ""
+    if cognition:
+        strategy_note = f"\nYour read on the situation: {cognition.strategic_intent}"
+        if cognition.domain_voice:
+            domain_voice_note = f"\nAs a {domain_name} engineer, you'd naturally: {cognition.domain_voice}"
+        if cognition.reconnection:
+            reconnection_note = f"\n{cognition.reconnection}"
+        if cognition.candidate_portrait:
+            candidate_note = f"\nCandidate so far: {cognition.candidate_portrait}"
 
-    return (
-        f"{header}\n\n"
-        f"CANDIDATE ANSWER:\n{transcript}\n\n"
-        f"Your question:"
-    )
+    # Phase-appropriate briefing
+    if turn_number <= 1:
+        situation = f"This is the start. {name} just joined for a {domain_name} interview ({level_desc}). Greet naturally and ask them to introduce themselves. No technical questions yet."
+    elif turn_number <= 4:
+        situation = f"You're getting to know {name}. They're a {level_desc} {domain_name} engineer"
+        if tools_str: situation += f" who knows {tools_str}"
+        if projects_str: situation += f" and worked on {projects_str}"
+        situation += ". Explore their background lightly. Find their strongest area. Don't deep-probe yet."
+    else:
+        situation = f"You're in the technical portion with {name} ({level_desc}, {domain_name})."
+        if tools_str: situation += f" They use {tools_str}."
+
+    return f"""{situation}{strategy_note}{domain_voice_note}{reconnection_note}{candidate_note}{covered}{mem_note}
+
+They just said: "{transcript}"
+
+Respond naturally. (1 sentence, as you would in a real interview)"""
 
 
 # ── Domain and mode labels ────────────────────────────────────────────────────

@@ -42,6 +42,7 @@ from app.core.session import (
 from app.engines import memory as mem
 from app.engines import question as qeng
 from app.engines import eval as eeng
+from app.engines import cognition as cog
 from app.models.session import (
     TurnContext,
     CandidateMemory,
@@ -107,6 +108,21 @@ async def run_turn(
         prior_answers=prior_answers,
     )
 
+    # ── Step 3b: Cognition assessment ────────────────────────────────────────
+    # Read accumulated interview state and produce strategic context.
+    # Pure Python + 1 Redis read/write. <5ms.
+    # Reads previous turn's eval scores from Redis for streak/depth tracking.
+    prev_eval = await _get_last_eval_scores(session_id, turn_number - 1)
+    cognition = await cog.assess(
+        session_id=session_id,
+        turn_number=turn_number,
+        transcript=transcript,
+        domain=state.active_domain,
+        mode=state.mode,
+        memory=memory,
+        eval_scores=prev_eval,
+    )
+
     # ── Step 4: Fire eval as background task ──────────────────────────────────
     # Eval starts IMMEDIATELY — runs in parallel with question generation.
     # Never awaited here. Never affects current turn.
@@ -144,7 +160,7 @@ async def run_turn(
     # The generator yields tokens as the LLM produces them.
     # We pass the tracker so question_engine can mark timing checkpoints.
     try:
-        async for token in qeng.stream(ctx, tracker=tracker):
+        async for token in qeng.stream(ctx, tracker=tracker, cognition=cognition):
             yield token
     finally:
         tracker.mark("turn_complete")
@@ -269,3 +285,18 @@ async def _persist_opening_turn(session_id: str, question: str, domain: str) -> 
     except Exception as exc:
         log.warning("interview.opening_turn_persist_failed",
                     session_id=session_id, error=str(exc))
+
+
+async def _get_last_eval_scores(session_id: str, prev_turn: int) -> dict | None:
+    """Read eval scores from previous turn. Returns None if not available."""
+    if prev_turn < 1:
+        return None
+    try:
+        rds = r._get_pool()
+        raw = await rds.get(f"session:{session_id}:eval:{prev_turn}")
+        if raw:
+            import json
+            return json.loads(raw)
+    except Exception:
+        pass
+    return None
