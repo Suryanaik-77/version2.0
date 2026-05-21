@@ -500,6 +500,9 @@ export default function InterviewPage() {
         </div>
       )}
 
+      {/* ── Camera PIP ── */}
+      <CameraPIP stream={mediaStream} />
+
       {/* ── Body ── */}
       <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 320px', overflow: 'hidden' }}>
 
@@ -753,6 +756,63 @@ function ThinkingDots() {
           animation: `pulse 1.2s ${delay}s ease-in-out infinite`,
         }} />
       ))}
+    </div>
+  )
+}
+
+// ── Camera PIP (picture-in-picture) ──────────────────────────────────────────
+function CameraPIP({ stream }: { stream: MediaStream | null }) {
+  const pipRef = useRef<HTMLVideoElement>(null)
+
+  useEffect(() => {
+    if (pipRef.current && stream) {
+      pipRef.current.srcObject = stream
+    }
+  }, [stream])
+
+  if (!stream) return null
+
+  return (
+    <div style={{
+      position: 'fixed', bottom: 80, right: 24,
+      width: 180, height: 135, borderRadius: 10,
+      overflow: 'hidden', border: '1.5px solid var(--border-1, #e0e0e0)',
+      background: '#1a1a1a',
+      boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
+      zIndex: 50,
+    }}>
+      {/* Header overlay */}
+      <div style={{
+        position: 'absolute', top: 0, left: 0, right: 0,
+        padding: '5px 8px',
+        background: 'linear-gradient(180deg, rgba(0,0,0,0.5) 0%, transparent 100%)',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        zIndex: 1,
+      }}>
+        <span style={{
+          fontFamily: 'var(--font-mono, monospace)', fontSize: 8,
+          letterSpacing: '0.1em', textTransform: 'uppercase' as const,
+          color: 'rgba(255,255,255,0.8)',
+        }}>
+          monitoring
+        </span>
+        <span style={{
+          width: 6, height: 6, borderRadius: '50%',
+          background: '#e53e3e',
+          animation: 'pulse 1.5s infinite',
+        }} />
+      </div>
+
+      <video
+        ref={pipRef}
+        autoPlay
+        muted
+        playsInline
+        style={{
+          width: '100%', height: '100%',
+          objectFit: 'cover', transform: 'scaleX(-1)',
+        }}
+      />
     </div>
   )
 }
