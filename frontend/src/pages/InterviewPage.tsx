@@ -20,7 +20,18 @@ const DOMAIN_LABELS: Record<string, string> = {
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────────
-type Stage = 'setup' | 'permissions' | 'interview'
+type Stage = 'setup' | 'resume_preview' | 'permissions' | 'interview'
+
+interface ParsedResume {
+  candidate_name: string
+  level: string
+  years_experience: number
+  domain: string
+  skills: string[]
+  tools: string[]
+  key_projects: string[]
+  education: string
+}
 type DomainKey = 'ANALOG_LAYOUT' | 'PHYSICAL_DESIGN' | 'DESIGN_VERIFICATION'
 
 export default function InterviewPage() {
@@ -47,6 +58,9 @@ export default function InterviewPage() {
   const [resumeLoading, setResumeLoading] = useState(false)
   const [selectedDomain, setSelectedDomain] = useState<DomainKey>('PHYSICAL_DESIGN')
   const [creating, setCreating] = useState(false)
+
+  // Parsed resume state
+  const [parsedResume, setParsedResume] = useState<ParsedResume | null>(null)
 
   // Permission stage state
   const [domain, setDomain] = useState<string>('Interview')
@@ -75,7 +89,6 @@ export default function InterviewPage() {
     try {
       let res
       if (resumeFile) {
-        // Upload file directly — backend extracts PDF text
         res = await sessionApi.createWithFile(selectedDomain, resumeFile)
       } else {
         res = await sessionApi.create(selectedDomain, resumeText)
@@ -84,7 +97,13 @@ export default function InterviewPage() {
       if (sid) {
         setSessionId(sid)
         setDomain(DOMAIN_LABELS[selectedDomain] || selectedDomain)
-        setStage('permissions')
+        // Show parsed resume preview before starting interview
+        if (res.data?.resume) {
+          setParsedResume(res.data.resume)
+          setStage('resume_preview')
+        } else {
+          setStage('permissions')
+        }
       }
     } catch {
       alert('Failed to create session. Please try again.')
@@ -343,6 +362,155 @@ export default function InterviewPage() {
             }}
           >
             {creating ? 'Creating session...' : !resumeText ? 'Upload resume to continue' : 'Next — Camera & Mic'}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Stage 1b: Resume Preview ──
+  if (stage === 'resume_preview' && parsedResume) {
+    const LEVEL_LABELS: Record<string, string> = {
+      'fresh_graduate': 'Fresh Graduate',
+      'trained_fresher': 'Trained Fresher',
+      'experienced_junior': 'Experienced Junior',
+      'experienced_senior': 'Experienced Senior',
+    }
+
+    return (
+      <div style={{
+        minHeight: '100dvh', background: 'var(--bg-canvas)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <div style={{
+          background: 'var(--bg-0)', border: '1px solid var(--border-1)',
+          borderRadius: 16, padding: '36px 44px', maxWidth: 560, width: '100%',
+          boxShadow: 'var(--shadow-lg)',
+        }}>
+          {/* Step indicator */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
+            <div style={{ flex: 1, height: 3, borderRadius: 2, background: 'var(--accent)' }} />
+            <div style={{ flex: 1, height: 3, borderRadius: 2, background: 'var(--accent)' }} />
+            <div style={{ flex: 1, height: 3, borderRadius: 2, background: 'var(--border-1)' }} />
+          </div>
+
+          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 22, color: 'var(--text-0)', marginBottom: 4 }}>
+            Resume Parsed Successfully
+          </h2>
+          <p style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 24 }}>
+            Please verify the extracted information. The interviewer will use this to personalize your session.
+          </p>
+
+          {/* Candidate info */}
+          <div style={{
+            background: 'var(--bg-1)', borderRadius: 12, padding: '20px 24px',
+            border: '1px solid var(--border-1)', marginBottom: 16,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+              <div style={{
+                width: 44, height: 44, borderRadius: 12, background: 'var(--accent)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: '#fff', fontSize: 18, fontWeight: 600, fontFamily: 'var(--font-display)',
+              }}>
+                {parsedResume.candidate_name?.charAt(0)?.toUpperCase() || 'C'}
+              </div>
+              <div>
+                <p style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-0)', fontFamily: 'var(--font-display)' }}>
+                  {parsedResume.candidate_name || 'Candidate'}
+                </p>
+                <p style={{ fontSize: 12, color: 'var(--text-3)' }}>
+                  {LEVEL_LABELS[parsedResume.level] || parsedResume.level}
+                  {parsedResume.years_experience > 0 && ` · ${parsedResume.years_experience} years`}
+                </p>
+              </div>
+            </div>
+
+            {parsedResume.education && (
+              <div style={{ marginBottom: 14 }}>
+                <p style={{ fontSize: 10, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-4)', marginBottom: 4 }}>Education</p>
+                <p style={{ fontSize: 13, color: 'var(--text-1)' }}>{parsedResume.education}</p>
+              </div>
+            )}
+          </div>
+
+          {/* Skills & Tools */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+            {parsedResume.skills?.length > 0 && (
+              <div style={{
+                background: 'var(--bg-1)', borderRadius: 10, padding: '14px 16px',
+                border: '1px solid var(--border-1)',
+              }}>
+                <p style={{ fontSize: 10, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-4)', marginBottom: 8 }}>Skills</p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {parsedResume.skills.map((s, i) => (
+                    <span key={i} style={{
+                      fontSize: 11, padding: '3px 8px', borderRadius: 6,
+                      background: 'var(--accent-8)', color: 'var(--accent-dim)',
+                      border: '1px solid var(--accent-15)',
+                    }}>{s}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {parsedResume.tools?.length > 0 && (
+              <div style={{
+                background: 'var(--bg-1)', borderRadius: 10, padding: '14px 16px',
+                border: '1px solid var(--border-1)',
+              }}>
+                <p style={{ fontSize: 10, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-4)', marginBottom: 8 }}>Tools</p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {parsedResume.tools.map((t, i) => (
+                    <span key={i} style={{
+                      fontSize: 11, padding: '3px 8px', borderRadius: 6,
+                      background: 'rgba(34,197,94,0.08)', color: 'var(--green, #22c55e)',
+                      border: '1px solid rgba(34,197,94,0.15)',
+                    }}>{t}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Projects */}
+          {parsedResume.key_projects?.length > 0 && (
+            <div style={{
+              background: 'var(--bg-1)', borderRadius: 10, padding: '14px 16px',
+              border: '1px solid var(--border-1)', marginBottom: 20,
+            }}>
+              <p style={{ fontSize: 10, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-4)', marginBottom: 8 }}>Key Projects</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {parsedResume.key_projects.map((p, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                    <span style={{ color: 'var(--text-4)', fontSize: 11, marginTop: 1, flexShrink: 0 }}>&#9656;</span>
+                    <p style={{ fontSize: 13, color: 'var(--text-1)', lineHeight: 1.5 }}>{p}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Domain badge */}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '10px 14px', background: 'var(--bg-1)', borderRadius: 8,
+            border: '1px solid var(--border-1)', marginBottom: 20,
+          }}>
+            <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--accent)', flexShrink: 0 }} />
+            <span style={{ fontSize: 12, color: 'var(--text-2)' }}>Interview Domain:</span>
+            <span style={{ fontSize: 13, color: 'var(--text-0)', fontWeight: 500 }}>{domain}</span>
+          </div>
+
+          <button
+            onClick={() => setStage('permissions')}
+            style={{
+              width: '100%', padding: '13px 20px',
+              background: 'var(--accent)', color: '#fff', border: 'none',
+              borderRadius: 10, fontSize: 14, fontWeight: 500,
+              cursor: 'pointer', fontFamily: 'var(--font-body)',
+            }}
+          >
+            Confirm & Continue
           </button>
         </div>
       </div>

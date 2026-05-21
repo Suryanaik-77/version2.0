@@ -46,10 +46,22 @@ class CreateSessionRequest(BaseModel):
     resume_text: str = ""
 
 
+class ResumeInfo(BaseModel):
+    candidate_name: str = "Candidate"
+    level: str = "trained_fresher"
+    years_experience: float = 0
+    domain: str = ""
+    skills: list[str] = []
+    tools: list[str] = []
+    key_projects: list[str] = []
+    education: str = ""
+
+
 class CreateSessionResponse(BaseModel):
     session_id: str
     ws_url: str
     domain: str
+    resume: ResumeInfo | None = None
 
 
 async def _extract_pdf_text(file_bytes: bytes) -> str:
@@ -111,6 +123,7 @@ async def create_session_with_upload(
         session_id=state.session_id,
         ws_url=ws_url,
         domain=state.active_domain.value,
+        resume=ResumeInfo(**(resume_data or {})) if resume_data else None,
     )
 
 
@@ -142,6 +155,7 @@ async def create_session_endpoint(
         session_id=state.session_id,
         ws_url=ws_url,
         domain=state.active_domain.value,
+        resume=ResumeInfo(**(resume_data or {})) if resume_data else None,
     )
 
 
