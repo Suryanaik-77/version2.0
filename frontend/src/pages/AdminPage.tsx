@@ -4,12 +4,12 @@ import {
   BarChart, Bar, XAxis, YAxis,
   Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts'
-import { adminApi } from '@/lib/api'
+import { adminApi, observabilityApi } from '@/lib/api'
 import { Button, Card, Badge, Skeleton, MonoLabel, EmptyState, Divider } from '@/components/ui'
 import { toast } from '@/hooks/useToast'
 import { format } from 'date-fns'
 
-type AdminTab = 'overview' | 'sessions' | 'latency' | 'cost' | 'prompts' | 'users' | 'events' | 'llm' | 'voice' | 'playground'
+type AdminTab = 'overview' | 'sessions' | 'latency' | 'cost' | 'prompts' | 'users' | 'events' | 'llm' | 'voice' | 'playground' | 'observability'
 
 export default function AdminPage() {
   const [tab, setTab] = useState<AdminTab>('overview')
@@ -25,6 +25,7 @@ export default function AdminPage() {
     { id: 'prompts',     label: 'Prompts' },
     { id: 'users',       label: 'Users' },
     { id: 'events',      label: 'Events' },
+    { id: 'observability', label: 'Observability' },
   ]
 
   return (
@@ -65,6 +66,7 @@ export default function AdminPage() {
         {tab === 'prompts'     && <PromptsTab />}
         {tab === 'users'       && <UsersTab />}
         {tab === 'events'      && <EventsTab />}
+        {tab === 'observability' && <ObservabilityTab />}
       </div>
     </div>
   )
@@ -1114,6 +1116,189 @@ Your question:`)
           )}
         </Card>
       </div>
+    </div>
+  )
+}
+
+// ── Observability ─────────────────────────────────────────────────────────────
+
+function ObservabilityTab() {
+  const [window_, setWindow] = useState(3600)
+  const [logFilter, setLogFilter] = useState<{ session_id?: string; step?: string; status?: string }>({})
+
+  const { data: summary, isLoading, refetch } = useQuery({
+    queryKey: ['obs-summary', window_],
+    queryFn: () => observabilityApi.summary(window_).then(r => r.data),
+    staleTime: 15_000,
+    refetchInterval: 15_000,
+  })
+
+  const { data: logs } = useQuery({
+    queryKey: ['obs-logs', logFilter],
+    queryFn: () => observabilityApi.logs({ ...logFilter, limit: 100 }).then(r => r.data),
+    staleTime: 10_000,
+    refetchInterval: 10_000,
+  })
+
+  const { data: health } = useQuery({
+    queryKey: ['obs-health'],
+    queryFn: () => observabilityApi.deepHealth().then(r => r.data),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  })
+
+  const steps = summary?.by_step ? Object.keys(summary.by_step) : []
+
+  return (
+    <div>
+      {/* Health banner */}
+      {health && (
+        <div style={{
+          display: 'flex', gap: 14, marginBottom: 20, padding: '12px 18px',
+          background: health.all_ok ? 'rgba(34,197,94,0.06)' : 'rgba(239,68,68,0.06)',
+          border: `1px solid ${health.all_ok ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'}`,
+          borderRadius: 10, alignItems: 'center',
+        }}>
+          <span style={{ fontSize: 16 }}>{health.all_ok ? '●' : '●'}</span>
+          <span style={{ fontSize: 13, color: health.all_ok ? 'var(--green, #22c55e)' : 'var(--red, #ef4444)', fontWeight: 600 }}>
+            {health.status?.toUpperCase()}
+          </span>
+          {health.checks && Object.entries(health.checks).map(([name, check]: [string, any]) => (
+            <span key={name} style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: check.ok ? 'var(--text-2)' : 'var(--red, #ef4444)' }}>
+              {name}: {check.ok ? `${check.latency_ms}ms` : 'DOWN'}
+            </span>
+          ))}
+          <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-3)', marginLeft: 'auto' }}>
+            {health.active_sessions} active sessions
+          </span>
+        </div>
+      )}
+
+      {/* Summary controls */}
+      <div style={{ display: 'flex', gap: 12, marginBottom: 20, alignItems: 'center' }}>
+        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 20, color: 'var(--text-0)', flex: 1 }}>
+          Call tracking
+        </h2>
+        <select value={window_} onChange={e => setWindow(Number(e.target.value))} style={selectStyle}>
+          <option value={600}>Last 10 min</option>
+          <option value={3600}>Last 1 hour</option>
+          <option value={86400}>Last 24 hours</option>
+        </select>
+        <Button variant="secondary" size="sm" onClick={() => refetch()}>Refresh</Button>
+      </div>
+
+      {/* Summary cards */}
+      {isLoading ? <DashSkeleton /> : (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 20 }}>
+            <Card style={{ padding: '14px 18px' }}>
+              <MonoLabel style={{ display: 'block', marginBottom: 8 }}>Total calls</MonoLabel>
+              <p style={{ fontFamily: 'var(--font-mono)', fontSize: 24, color: 'var(--text-0)' }}>{summary?.total_calls ?? 0}</p>
+            </Card>
+            <Card style={{ padding: '14px 18px' }}>
+              <MonoLabel style={{ display: 'block', marginBottom: 8 }}>Total cost</MonoLabel>
+              <p style={{ fontFamily: 'var(--font-mono)', fontSize: 24, color: 'var(--text-0)' }}>
+                ${(summary?.total_cost_usd ?? 0).toFixed(4)}
+              </p>
+            </Card>
+            <Card style={{ padding: '14px 18px' }}>
+              <MonoLabel style={{ display: 'block', marginBottom: 8 }}>Steps tracked</MonoLabel>
+              <p style={{ fontFamily: 'var(--font-mono)', fontSize: 24, color: 'var(--text-0)' }}>{steps.length}</p>
+            </Card>
+            <Card style={{ padding: '14px 18px' }}>
+              <MonoLabel style={{ display: 'block', marginBottom: 8 }}>Window</MonoLabel>
+              <p style={{ fontFamily: 'var(--font-mono)', fontSize: 24, color: 'var(--text-0)' }}>
+                {window_ < 3600 ? `${window_ / 60}m` : `${window_ / 3600}h`}
+              </p>
+            </Card>
+          </div>
+
+          {/* Per-step breakdown */}
+          {steps.length > 0 && (
+            <Card style={{ marginBottom: 20 }}>
+              <MonoLabel style={{ display: 'block', marginBottom: 14 }}>By step</MonoLabel>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--border-0)' }}>
+                    {['Step', 'Calls', 'Success rate', 'P50', 'P95', 'Avg', 'Cost'].map(h => (
+                      <th key={h} style={{ padding: '8px 12px', textAlign: 'left', fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-3)', fontWeight: 400 }}>
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {steps.map(step => {
+                    const s = summary.by_step[step]
+                    return (
+                      <tr key={step} style={{ borderBottom: '1px solid var(--border-0)' }}>
+                        <td style={{ padding: '8px 12px', fontFamily: 'var(--font-mono)', color: 'var(--text-1)', fontWeight: 500 }}>{step}</td>
+                        <td style={{ padding: '8px 12px', fontFamily: 'var(--font-mono)', color: 'var(--text-2)' }}>{s.total_calls}</td>
+                        <td style={{ padding: '8px 12px' }}>
+                          <Badge variant={s.success_rate >= 0.95 ? 'green' : s.success_rate >= 0.8 ? 'orange' : 'red'}>
+                            {(s.success_rate * 100).toFixed(0)}%
+                          </Badge>
+                        </td>
+                        <td style={{ padding: '8px 12px', fontFamily: 'var(--font-mono)', color: 'var(--text-2)' }}>{s.latency?.p50 ?? '—'}ms</td>
+                        <td style={{ padding: '8px 12px', fontFamily: 'var(--font-mono)', color: s.latency?.p95 > 2000 ? 'var(--red, #ef4444)' : 'var(--text-2)' }}>{s.latency?.p95 ?? '—'}ms</td>
+                        <td style={{ padding: '8px 12px', fontFamily: 'var(--font-mono)', color: 'var(--text-2)' }}>{s.latency?.avg ?? '—'}ms</td>
+                        <td style={{ padding: '8px 12px', fontFamily: 'var(--font-mono)', color: 'var(--text-2)' }}>${s.cost_usd?.toFixed(4) ?? '—'}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </Card>
+          )}
+        </>
+      )}
+
+      {/* Call logs */}
+      <div style={{ display: 'flex', gap: 12, marginBottom: 14, alignItems: 'center' }}>
+        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 16, color: 'var(--text-0)', flex: 1 }}>Recent call logs</h3>
+        <select value={logFilter.step || ''} onChange={e => setLogFilter(f => ({ ...f, step: e.target.value || undefined }))} style={{ ...selectStyle, width: 'auto' }}>
+          <option value="">All steps</option>
+          <option value="LLM_question">LLM Question</option>
+          <option value="LLM_eval">LLM Eval</option>
+          <option value="STT">STT</option>
+          <option value="TTS">TTS</option>
+        </select>
+        <select value={logFilter.status || ''} onChange={e => setLogFilter(f => ({ ...f, status: e.target.value || undefined }))} style={{ ...selectStyle, width: 'auto' }}>
+          <option value="">All status</option>
+          <option value="success">Success</option>
+          <option value="failure">Failure</option>
+        </select>
+      </div>
+      <Card style={{ padding: 0, overflow: 'hidden', maxHeight: 400, overflowY: 'auto' }}>
+        {!logs?.logs?.length ? (
+          <EmptyState title="No call logs" body="LLM/STT/TTS call logs will appear here during active interviews." />
+        ) : (
+          <div>
+            {logs.logs.map((log: any, i: number) => (
+              <div key={i} style={{
+                display: 'flex', gap: 10, padding: '8px 14px', fontSize: 11,
+                borderBottom: '1px solid var(--border-0)', alignItems: 'center',
+                fontFamily: 'var(--font-mono)',
+              }}>
+                <span style={{ color: 'var(--text-4)', width: 60, flexShrink: 0 }}>{log.formatted_time}</span>
+                <Badge variant={log.status === 'success' ? 'green' : 'red'} style={{ flexShrink: 0 }}>{log.status}</Badge>
+                <span style={{ color: 'var(--text-2)', width: 90, flexShrink: 0 }}>{log.step}</span>
+                <span style={{ color: 'var(--text-3)', width: 110, flexShrink: 0 }}>{log.model}</span>
+                <span style={{ color: log.latency_ms > 2000 ? 'var(--red, #ef4444)' : 'var(--text-1)', width: 60, flexShrink: 0, textAlign: 'right' }}>
+                  {log.latency_ms}ms
+                </span>
+                <span style={{ color: 'var(--text-3)', width: 70, flexShrink: 0, textAlign: 'right' }}>
+                  ${(log.cost_usd || 0).toFixed(5)}
+                </span>
+                <span style={{ color: 'var(--text-4)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {log.session_id?.slice(0, 8)}
+                </span>
+                {log.error && <span style={{ color: 'var(--red, #ef4444)', fontSize: 10 }}>{log.error}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
     </div>
   )
 }

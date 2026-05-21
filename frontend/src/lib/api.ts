@@ -161,6 +161,13 @@ export const adminApi = {
   playground:     (d: object)    => api.post('/admin/playground', d),
 }
 
+export const observabilityApi = {
+  summary:  (window?: number) => api.get('/api/observability/summary', { params: window ? { window } : {} }),
+  logs:     (p?: object)      => api.get('/api/observability/logs', { params: p }),
+  session:  (id: string)      => api.get(`/api/observability/session/${id}`),
+  deepHealth: ()              => api.get('/health/deep'),
+}
+
 export const integrityApi = {
   // Fire-and-forget — never throws, never blocks interview
   sendEvent: (data: { session_id: string; event_type: string; context?: object }) =>
