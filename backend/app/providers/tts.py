@@ -33,6 +33,7 @@ import structlog
 
 from app.config import get_settings
 from app.observability.metrics import record_event
+from app.observability.call_tracker import track_tts_call
 
 log = structlog.get_logger(__name__)
 settings = get_settings()
@@ -102,21 +103,27 @@ class OpenAITTS:
                 bytes=len(audio_bytes),
                 latency_ms=elapsed_ms,
             )
+            track_tts_call(session_id=session_id, latency_ms=elapsed_ms,
+                           char_count=len(text), provider="openai", status="success")
             return audio_bytes
 
         except asyncio.TimeoutError:
             elapsed_ms = int((time.monotonic() - t_start) * 1000)
             log.warning("tts.timeout", session_id=session_id, elapsed_ms=elapsed_ms)
             record_event("tts.timeout", session_id=session_id)
-            # Return silence so playback doesn't hang
+            track_tts_call(session_id=session_id, latency_ms=elapsed_ms,
+                           char_count=len(text), provider="openai", status="failure", error="timeout")
             return _silence_pcm(300)
 
         except asyncio.CancelledError:
             raise  # Barge-in — propagate
 
         except Exception as exc:
+            elapsed_ms = int((time.monotonic() - t_start) * 1000)
             log.error("tts.error", session_id=session_id, error=str(exc))
             record_event("tts.error", session_id=session_id, error=str(exc))
+            track_tts_call(session_id=session_id, latency_ms=elapsed_ms,
+                           char_count=len(text), provider="openai", status="failure", error=str(exc))
             return _silence_pcm(300)
 
     async def stream_synthesize(self, text: str, session_id: str = "") -> AsyncIterator[bytes]:

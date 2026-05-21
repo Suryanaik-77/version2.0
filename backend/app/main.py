@@ -27,6 +27,7 @@ from app.api import gateway, websocket
 from app.api.auth_routes import router as auth_router
 from app.api.admin import router as admin_router
 from app.api.reviewer import router as reviewer_router
+from app.api.observability import router as obs_router
 from app.core.anti_cheat import integrity_router
 from app.config import get_settings
 from app.core import redis as r
@@ -43,6 +44,9 @@ _background_tasks: list[asyncio.Task] = []
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ── Startup ──────────────────────────────────────────────────────────────
+    from app.observability.logging import configure_logging
+    configure_logging()
+
     log.info("startup.redis_init")
     await r.init_redis()
 
@@ -102,6 +106,7 @@ app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(reviewer_router)
 app.include_router(integrity_router)
+app.include_router(obs_router)
 
 # ── Global exception handler ──────────────────────────────────────────────────
 

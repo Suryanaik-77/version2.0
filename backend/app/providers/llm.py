@@ -26,6 +26,7 @@ from openai import AsyncOpenAI, APITimeoutError, APIConnectionError
 from app.config import get_settings
 from app.core import redis as r
 from app.observability.metrics import record_event
+from app.observability.call_tracker import track_llm_call
 
 log = structlog.get_logger(__name__)
 settings = get_settings()
@@ -164,14 +165,29 @@ async def stream_generate(
             tokens_out += 1
             yield delta
 
+        elapsed_ms = int((time.monotonic() - t_start) * 1000)
         await _record_success("openai")
+        track_llm_call(
+            session_id=session_id,
+            step="LLM_question" if turn_number > 0 else "LLM_eval",
+            model=model,
+            latency_ms=elapsed_ms,
+            output_tokens=tokens_out,
+            status="success",
+        )
 
     except asyncio.TimeoutError:
+        elapsed_ms = int((time.monotonic() - t_start) * 1000)
         await _record_failure("openai")
+        track_llm_call(session_id=session_id, step="LLM_question", model=model,
+                        latency_ms=elapsed_ms, status="failure", error="timeout")
         raise LLMTimeoutError("LLM did not return first token within deadline")
 
     except (APITimeoutError, APIConnectionError) as exc:
+        elapsed_ms = int((time.monotonic() - t_start) * 1000)
         await _record_failure("openai")
+        track_llm_call(session_id=session_id, step="LLM_question", model=model,
+                        latency_ms=elapsed_ms, status="failure", error=str(exc))
         raise LLMProviderError(f"LLM provider error: {exc}") from exc
 
     except asyncio.CancelledError:
@@ -340,10 +356,14 @@ async def _bedrock_generate(
         elapsed = int((time.monotonic() - t0) * 1000)
         log.info("llm.bedrock", model=model_id, latency_ms=elapsed, chars=len(result))
         record_event("llm.bedrock", session_id=session_id, model=model_id, latency_ms=elapsed)
-        # Yield entire result (Bedrock is not streaming in this implementation)
+        track_llm_call(session_id=session_id, step="LLM_question", model=model_id,
+                        latency_ms=elapsed, output_tokens=len(result.split()), status="success")
         yield result
     except Exception as exc:
+        elapsed = int((time.monotonic() - t0) * 1000)
         log.error("llm.bedrock_error", model=model_id, error=str(exc))
+        track_llm_call(session_id=session_id, step="LLM_question", model=model_id,
+                        latency_ms=elapsed, status="failure", error=str(exc))
         raise LLMProviderError(f"Bedrock error: {exc}")
 
 
@@ -386,6 +406,11 @@ async def _grok_generate(
         elapsed = int((time.monotonic() - t_start) * 1000)
         log.info("llm.grok", model=model_id, latency_ms=elapsed)
         record_event("llm.grok", session_id=session_id, model=model_id, latency_ms=elapsed)
+        track_llm_call(session_id=session_id, step="LLM_question", model=model_id,
+                        latency_ms=elapsed, status="success")
     except Exception as exc:
+        elapsed = int((time.monotonic() - t_start) * 1000)
         log.error("llm.grok_error", model=model_id, error=str(exc))
+        track_llm_call(session_id=session_id, step="LLM_question", model=model_id,
+                        latency_ms=elapsed, status="failure", error=str(exc))
         raise LLMProviderError(f"Grok error: {exc}")

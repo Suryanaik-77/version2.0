@@ -27,6 +27,7 @@ import structlog
 
 from app.config import get_settings
 from app.observability.metrics import record_event
+from app.observability.call_tracker import track_stt_call
 
 log = structlog.get_logger(__name__)
 settings = get_settings()
@@ -88,6 +89,9 @@ class OpenAIWhisperSTT:
                 audio_bytes=len(audio_bytes),
                 latency_ms=elapsed_ms,
             )
+            audio_sec = len(audio_bytes) / (16000 * 2)  # 16kHz 16-bit mono
+            track_stt_call(session_id=session_id, latency_ms=elapsed_ms,
+                           audio_duration_sec=audio_sec, status="success")
             log.debug(
                 "stt.done",
                 session_id=session_id,
@@ -101,14 +105,19 @@ class OpenAIWhisperSTT:
             elapsed_ms = int((time.monotonic() - t_start) * 1000)
             log.warning("stt.timeout", session_id=session_id, elapsed_ms=elapsed_ms)
             record_event("stt.timeout", session_id=session_id, latency_ms=elapsed_ms)
+            track_stt_call(session_id=session_id, latency_ms=elapsed_ms,
+                           status="failure", error="timeout")
             return ""
 
         except asyncio.CancelledError:
             raise
 
         except Exception as exc:
+            elapsed_ms = int((time.monotonic() - t_start) * 1000)
             log.error("stt.error", session_id=session_id, error=str(exc))
             record_event("stt.error", session_id=session_id)
+            track_stt_call(session_id=session_id, latency_ms=elapsed_ms,
+                           status="failure", error=str(exc))
             return ""
 
 
