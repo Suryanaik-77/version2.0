@@ -11,19 +11,17 @@ import { Button, Card, Badge, Skeleton, MonoLabel, EmptyState, Divider } from '@
 import { toast } from '@/hooks/useToast'
 import { format } from 'date-fns'
 
-type AdminTab = 'overview' | 'sessions' | 'latency' | 'cost' | 'prompts' | 'users' | 'events' | 'llm' | 'voice' | 'playground' | 'observability' | 'reviews'
+type AdminTab = 'sessions' | 'latency' | 'prompts' | 'users' | 'events' | 'llm' | 'voice' | 'playground' | 'observability' | 'reviews'
 
 export default function AdminPage() {
-  const [tab, setTab] = useState<AdminTab>('overview')
+  const [tab, setTab] = useState<AdminTab>('sessions')
 
   const TABS: { id: AdminTab; label: string }[] = [
-    { id: 'overview',    label: 'Overview' },
     { id: 'sessions',    label: 'Sessions' },
     { id: 'llm',         label: 'LLM Config' },
     { id: 'voice',       label: 'Voice' },
     { id: 'playground',  label: 'Playground' },
     { id: 'latency',     label: 'Latency' },
-    { id: 'cost',        label: 'Cost' },
     { id: 'prompts',     label: 'Prompts' },
     { id: 'users',       label: 'Users' },
     { id: 'events',      label: 'Events' },
@@ -59,102 +57,17 @@ export default function AdminPage() {
 
       {/* Content */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '28px 32px' }}>
-        {tab === 'overview'    && <OverviewTab />}
         {tab === 'sessions'    && <SessionsTab />}
         {tab === 'llm'         && <LLMConfigTab />}
         {tab === 'voice'       && <VoiceConfigTab />}
         {tab === 'playground'  && <PlaygroundTab />}
         {tab === 'latency'     && <LatencyTab />}
-        {tab === 'cost'        && <CostTab />}
         {tab === 'prompts'     && <PromptsTab />}
         {tab === 'users'       && <UsersTab />}
         {tab === 'events'      && <EventsTab />}
         {tab === 'observability' && <ObservabilityTab />}
         {tab === 'reviews'       && <ExpertReviewTab />}
       </div>
-    </div>
-  )
-}
-
-// ── Overview ───────────────────────────────────────────────────────────────────
-
-function OverviewTab() {
-  const { data, isLoading } = useQuery({
-    queryKey: ['admin-dashboard'],
-    queryFn: () => adminApi.dashboard().then(r => r.data),
-    staleTime: 30_000,
-    refetchInterval: 30_000,
-  })
-
-  const { data: live } = useQuery({
-    queryKey: ['admin-active-sessions'],
-    queryFn: () => adminApi.activeSessions().then(r => r.data),
-    staleTime: 10_000,
-    refetchInterval: 10_000,
-  })
-
-  if (isLoading) return <DashSkeleton />
-
-  const metrics = [
-    { label: 'Active now',     value: data?.active_sessions ?? 0,       unit: '',      accent: true },
-    { label: 'Today',          value: data?.sessions_today ?? 0,         unit: ' sessions' },
-    { label: 'This week',      value: data?.sessions_week ?? 0,          unit: ' sessions' },
-    { label: 'Avg score',      value: data?.avg_score_week?.toFixed(1) ?? '—', unit: '/10' },
-    { label: 'Cost today',     value: data?.total_cost_today_usd?.toFixed(4) ?? '—', unit: ' USD' },
-    { label: 'p50 first-token', value: data?.p50_first_token_ms ?? '—',  unit: 'ms' },
-    { label: 'p95 first-token', value: data?.p95_first_token_ms ?? '—',  unit: 'ms' },
-    { label: 'WS reconnects',  value: data?.ws_reconnects_today ?? 0,    unit: '' },
-  ]
-
-  return (
-    <div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 28 }}>
-        {metrics.map(m => (
-          <Card key={m.label} style={{ padding: '16px 20px' }}>
-            <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-3)', marginBottom: 8 }}>
-              {m.label}
-            </p>
-            <p style={{
-              fontFamily: 'var(--font-mono)', fontSize: 24,
-              color: m.accent ? 'var(--accent)' : 'var(--text-0)',
-              lineHeight: 1,
-            }}>
-              {m.value}
-              <span style={{ fontSize: 12, color: 'var(--text-3)' }}>{m.unit}</span>
-            </p>
-          </Card>
-        ))}
-      </div>
-
-      {/* Live sessions */}
-      <Card>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 17, color: 'var(--text-0)' }}>Live sessions</h3>
-            <Badge variant="orange" dot live>{data?.active_sessions ?? 0} active</Badge>
-          </div>
-        </div>
-        {!live?.length ? (
-          <p style={{ fontSize: 13, color: 'var(--text-3)', padding: '8px 0' }}>No active sessions right now.</p>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {live.map((s: any) => (
-              <div key={s.session_id} style={{
-                display: 'flex', alignItems: 'center', gap: 14,
-                padding: '10px 14px', background: 'var(--bg-1)',
-                borderRadius: 'var(--r-md)', fontSize: 12,
-              }}>
-                <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-3)', width: 80, flexShrink: 0 }}>
-                  {s.session_id?.slice(0, 8)}…
-                </span>
-                <span style={{ color: 'var(--text-1)', flex: 1 }}>{s.domain?.replace(/_/g, ' ')}</span>
-                <Badge variant="gray">{s.mode}</Badge>
-                <span style={{ color: 'var(--text-3)' }}>Turn {s.turn_count}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
     </div>
   )
 }
@@ -276,77 +189,6 @@ function LatencyTab() {
             <span>0</span><span>500ms</span><span>1000ms</span><span>2000ms+</span>
           </div>
         </Card>
-      )}
-    </div>
-  )
-}
-
-// ── Cost ──────────────────────────────────────────────────────────────────────
-
-function CostTab() {
-  const { data, isLoading } = useQuery({
-    queryKey: ['admin-cost'],
-    queryFn: () => adminApi.costMetrics({ days: 7 }).then(r => r.data),
-    staleTime: 60_000,
-  })
-
-  const chartData = data?.daily?.map((d: any) => ({
-    date: d.date?.slice(5), // MM-DD
-    cost: d.cost_usd,
-    sessions: d.sessions,
-    tokens: Math.round((d.tokens_in + d.tokens_out) / 1000),
-  })) || []
-
-  const totalCost = data?.daily?.reduce((a: number, d: any) => a + (d.cost_usd || 0), 0) || 0
-
-  return (
-    <div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
-        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 20, color: 'var(--text-0)' }}>Cost analytics</h2>
-        <MonoLabel>Last 7 days</MonoLabel>
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14, marginBottom: 24 }}>
-        <Card style={{ padding: '16px 20px' }}>
-          <MonoLabel style={{ display: 'block', marginBottom: 8 }}>Total (7d)</MonoLabel>
-          <p style={{ fontFamily: 'var(--font-mono)', fontSize: 26, color: 'var(--text-0)' }}>
-            ${totalCost.toFixed(4)}
-          </p>
-        </Card>
-        <Card style={{ padding: '16px 20px' }}>
-          <MonoLabel style={{ display: 'block', marginBottom: 8 }}>Per session avg</MonoLabel>
-          <p style={{ fontFamily: 'var(--font-mono)', fontSize: 26, color: 'var(--text-0)' }}>
-            ${data?.daily?.length ? (totalCost / data.daily.reduce((a: number, d: any) => a + d.sessions, 0) || 0).toFixed(4) : '—'}
-          </p>
-        </Card>
-        <Card style={{ padding: '16px 20px' }}>
-          <MonoLabel style={{ display: 'block', marginBottom: 8 }}>Sessions (7d)</MonoLabel>
-          <p style={{ fontFamily: 'var(--font-mono)', fontSize: 26, color: 'var(--text-0)' }}>
-            {data?.daily?.reduce((a: number, d: any) => a + d.sessions, 0) || 0}
-          </p>
-        </Card>
-      </div>
-
-      {isLoading ? (
-        <Skeleton h={220} style={{ borderRadius: 12 }} />
-      ) : chartData.length > 0 ? (
-        <Card>
-          <MonoLabel style={{ display: 'block', marginBottom: 20 }}>Daily cost (USD)</MonoLabel>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={chartData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border-0)" />
-              <XAxis dataKey="date" tick={{ fontSize: 11, fill: 'var(--text-3)', fontFamily: 'var(--font-mono)' }} />
-              <YAxis tick={{ fontSize: 11, fill: 'var(--text-3)', fontFamily: 'var(--font-mono)' }} />
-              <Tooltip
-                contentStyle={{ background: 'var(--bg-0)', border: '1px solid var(--border-1)', borderRadius: 8, fontSize: 12, fontFamily: 'var(--font-mono)' }}
-                formatter={(val: number) => [`$${val.toFixed(4)}`, 'Cost']}
-              />
-              <Bar dataKey="cost" fill="var(--accent)" radius={[2, 2, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </Card>
-      ) : (
-        <EmptyState title="No cost data" body="Cost data will appear here once interviews are completed." />
       )}
     </div>
   )

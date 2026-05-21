@@ -5,7 +5,11 @@
  */
 import React, { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { observabilityApi } from '@/lib/api'
+import { observabilityApi, adminApi } from '@/lib/api'
+import {
+  BarChart, Bar, XAxis, YAxis,
+  Tooltip, ResponsiveContainer, CartesianGrid,
+} from 'recharts'
 import { Button, Card, Badge, Skeleton, MonoLabel, EmptyState } from '@/components/ui'
 
 const STEP_CFG: Record<string, { color: string; bg: string; label: string }> = {
@@ -215,6 +219,9 @@ export default function ObservabilityTab() {
         </>
       )}
 
+      {/* Daily cost */}
+      <CostSection />
+
       {/* Raw call log */}
       <MonoLabel style={{ display: 'block', marginBottom: 8 }}>Raw call log</MonoLabel>
       <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
@@ -331,6 +338,53 @@ function LoadSkel() {
         {[1, 2, 3, 4].map(i => <Skeleton key={i} h={80} style={{ borderRadius: 12 }} />)}
       </div>
       <Skeleton h={200} style={{ borderRadius: 12 }} />
+    </div>
+  )
+}
+
+function CostSection() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['admin-cost'],
+    queryFn: () => adminApi.costMetrics({ days: 7 }).then(r => r.data),
+    staleTime: 60_000,
+  })
+
+  const chartData = data?.daily?.map((d: any) => ({
+    date: d.date?.slice(5),
+    cost: d.cost_usd,
+    sessions: d.sessions,
+  })) || []
+
+  const totalCost = data?.daily?.reduce((a: number, d: any) => a + (d.cost_usd || 0), 0) || 0
+  const totalSessions = data?.daily?.reduce((a: number, d: any) => a + (d.sessions || 0), 0) || 0
+
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <MonoLabel style={{ display: 'block', marginBottom: 10 }}>Cost (last 7 days)</MonoLabel>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14, marginBottom: 14 }}>
+        <StatCard label="Total (7d)" value={`$${totalCost.toFixed(4)}`} />
+        <StatCard label="Per session avg" value={totalSessions > 0 ? `$${(totalCost / totalSessions).toFixed(4)}` : '—'} />
+        <StatCard label="Sessions (7d)" value={totalSessions} />
+      </div>
+      {isLoading ? (
+        <Skeleton h={200} style={{ borderRadius: 12 }} />
+      ) : chartData.length > 0 ? (
+        <Card>
+          <MonoLabel style={{ display: 'block', marginBottom: 16 }}>Daily cost (USD)</MonoLabel>
+          <ResponsiveContainer width="100%" height={180}>
+            <BarChart data={chartData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border-0, #e5e7eb)" />
+              <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#999', fontFamily: 'monospace' }} />
+              <YAxis tick={{ fontSize: 11, fill: '#999', fontFamily: 'monospace' }} />
+              <Tooltip contentStyle={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 12, fontFamily: 'monospace' }}
+                formatter={(val: number) => [`$${val.toFixed(4)}`, 'Cost']} />
+              <Bar dataKey="cost" fill="var(--accent, #3b82f6)" radius={[2, 2, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </Card>
+      ) : (
+        <Card><EmptyState title="No cost data" body="Cost data appears after interviews complete." /></Card>
+      )}
     </div>
   )
 }
