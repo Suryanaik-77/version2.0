@@ -123,16 +123,6 @@ export const sessionApi = {
   end:    (sessionId: string) => api.delete(`/sessions/${sessionId}`),
 }
 
-export const reviewerApi = {
-  queue:     (status?: string)          => api.get('/reviewer/queue', { params: { status } }),
-  transcript:(sessionId: string)        => api.get(`/reviewer/sessions/${sessionId}/transcript`),
-  integrity: (sessionId: string)        => api.get(`/reviewer/sessions/${sessionId}/integrity`),
-  addNote:   (sessionId: string, d: object) => api.post(`/reviewer/sessions/${sessionId}/notes`, d),
-  override:  (sessionId: string, d: object) => api.post(`/reviewer/sessions/${sessionId}/override`, d),
-  flag:      (sessionId: string, d: object) => api.post(`/reviewer/sessions/${sessionId}/flag`, d),
-  approve:   (sessionId: string)        => api.post(`/reviewer/sessions/${sessionId}/approve`),
-}
-
 export const adminApi = {
   dashboard:      ()              => api.get('/admin/dashboard'),
   activeSessions: ()              => api.get('/admin/sessions/active'),
