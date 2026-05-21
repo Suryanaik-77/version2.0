@@ -64,6 +64,8 @@ class CognitionResult:
     verified_context: str       # e.g. "Already verified: mechanism, ownership. Try: debugging, tradeoffs."
     # Project grounding — specific project to anchor questions to
     project_grounding: str      # e.g. "They worked on OTA layout for a 28nm tapeout."
+    # Resume grounding alert — flags when candidate drifts from resume/domain
+    grounding_alert: str        # e.g. "Off-domain drift detected. Redirect to resume areas." or ""
 
 
 # ── Redis key ────────────────────────────────────────────────────────────────
@@ -242,7 +244,12 @@ async def assess(
     _extract_topic_signals(ts, transcript, memory)
     topic_states[current_topic] = ts
 
-    # Behavioral pacing (subtle, not emotional labels)
+    # Resume grounding — validate candidate statement against resume/domain
+    grounding_alert = _validate_grounding(
+        transcript, domain, cog_state, turn_number
+    )
+
+    # Behavioral pacing (rare, subtle — only on clear struggle signals)
     pacing_hint = _compute_pacing_hint(transcript, ts, mode)
 
     # Transition pressure — signal-quality-driven, not just turn count
@@ -315,6 +322,7 @@ async def assess(
         momentum=momentum,
         verified_context=verified_context,
         project_grounding=project_grounding,
+        grounding_alert=grounding_alert,
     )
 
 
@@ -501,6 +509,125 @@ def _find_reconnection(
     return f"Earlier (turn {best['turn']}), they said: \"{best['text'][:80]}\" — you can reconnect this to what they're saying now."
 
 
+# ── Resume grounding + statement validation ─────────────────────────────────
+
+# Domain keyword sets for drift detection
+_DOMAIN_KEYWORDS: dict[VLSIDomain, frozenset[str]] = {
+    VLSIDomain.PHYSICAL_DESIGN: frozenset([
+        "floorplan", "placement", "cts", "clock", "timing", "sta", "setup", "hold",
+        "routing", "congestion", "ir drop", "power grid", "eco", "signoff", "tapeout",
+        "synthesis", "netlist", "liberty", "sdc", "sdf", "def", "lef", "gds",
+        "primetime", "icc2", "innovus", "slack", "skew", "insertion delay",
+        "utilization", "density", "via", "metal", "buffer", "inverter",
+        "electromigration", "antenna", "crosstalk", "noise", "drc", "lvs",
+    ]),
+    VLSIDomain.ANALOG_LAYOUT: frozenset([
+        "matching", "mismatch", "common centroid", "interdigitation", "parasitic",
+        "extraction", "guard ring", "latch-up", "esd", "drc", "lvs", "virtuoso",
+        "calibre", "starrc", "assura", "layout", "schematic", "transistor",
+        "capacitor", "resistor", "ota", "amplifier", "bandgap", "ldo", "pll",
+        "adc", "dac", "current mirror", "diff pair", "differential",
+        "substrate", "well", "metal", "routing", "shielding", "symmetry",
+        "floorplan", "dummy", "finger", "post-layout", "pre-layout", "simulation",
+    ]),
+    VLSIDomain.DESIGN_VERIFICATION: frozenset([
+        "uvm", "testbench", "driver", "monitor", "sequencer", "scoreboard",
+        "coverage", "assertion", "sva", "constrained random", "regression",
+        "simulation", "debug", "waveform", "protocol", "axi", "apb", "ahb",
+        "vcs", "xcelium", "questa", "formal", "verification", "stimulus",
+        "checker", "agent", "sequence", "factory", "config_db", "ral",
+        "functional coverage", "code coverage", "covergroup", "property",
+    ]),
+}
+
+# Clearly off-domain keywords — things that should never appear in a VLSI interview
+_OFF_DOMAIN_MARKERS = frozenset([
+    "steel", "construction", "building", "concrete", "civil engineering",
+    "web development", "javascript", "react", "python django", "machine learning",
+    "database", "sql server", "cloud computing", "aws lambda", "kubernetes",
+    "marketing", "sales", "accounting", "finance", "hr", "recruitment",
+    "cooking", "sports", "music", "movie", "game",
+])
+
+
+def _validate_grounding(
+    transcript: str,
+    domain: VLSIDomain,
+    cog_state: dict,
+    turn_number: int,
+) -> str:
+    """
+    Validate candidate's statement against resume and domain.
+    Returns a grounding alert string if drift is detected, empty string otherwise.
+
+    Resume-derived info has HIGHER TRUST than live conversational input.
+    This prevents the interviewer from being derailed by noise, fake claims,
+    or off-domain tangents.
+
+    Classification:
+      - on_domain: statement relates to interview domain → follow normally
+      - off_domain: statement is clearly outside VLSI → redirect
+      - domain_mismatch: statement is VLSI but wrong domain → note but don't follow
+      - resume_inconsistent: statement contradicts resume data → challenge
+      - noise: very short / incoherent → ignore, ask a focused question
+    """
+    t = transcript.lower().strip()
+    words = t.split()
+
+    # Skip validation on very early turns (intro/discovery)
+    if turn_number <= 3:
+        return ""
+
+    # Noise detection — very short or incoherent
+    if len(words) < 3:
+        return "Very short or unclear answer. Ask a focused, specific question about their resume experience."
+
+    # Off-domain detection — clearly non-VLSI content
+    if any(marker in t for marker in _OFF_DOMAIN_MARKERS):
+        resume_projects = cog_state.get("resume_projects", [])
+        if resume_projects:
+            return f"Off-topic drift detected. Redirect to their actual experience: {', '.join(str(p) for p in resume_projects[:2])}."
+        return "Off-topic drift detected. Redirect to their domain experience."
+
+    # Domain keyword check
+    domain_kws = _DOMAIN_KEYWORDS.get(domain, frozenset())
+    domain_match_count = sum(1 for kw in domain_kws if kw in t)
+
+    # Check for wrong-domain VLSI content
+    other_domains = [d for d in VLSIDomain if d != domain]
+    other_match_counts = {}
+    for other_d in other_domains:
+        other_kws = _DOMAIN_KEYWORDS.get(other_d, frozenset())
+        other_match_counts[other_d] = sum(1 for kw in other_kws if kw in t)
+
+    # If another domain matches more strongly than the interview domain
+    max_other = max(other_match_counts.values()) if other_match_counts else 0
+    if max_other > domain_match_count and max_other >= 2 and domain_match_count == 0:
+        domain_name = {
+            VLSIDomain.ANALOG_LAYOUT: "analog layout",
+            VLSIDomain.PHYSICAL_DESIGN: "physical design",
+            VLSIDomain.DESIGN_VERIFICATION: "design verification",
+        }.get(domain, "their domain")
+        return f"Candidate is drifting into a different domain. Stay focused on {domain_name}."
+
+    # Resume consistency check — does claim match resume level/tools/skills?
+    resume_level = cog_state.get("resume_level", "")
+    resume_tools = [str(t).lower() for t in cog_state.get("resume_tools", [])]
+    resume_skills = [str(s).lower() for s in cog_state.get("resume_skills", [])]
+
+    # Expert claims from a fresher — suspicious
+    if resume_level in ("fresh_graduate", "trained_fresher"):
+        expert_claims = [
+            "i led the tapeout", "i architected", "i owned the entire",
+            "10 years", "15 years", "20 years", "senior architect",
+            "i managed the team", "i directed",
+        ]
+        if any(ec in t for ec in expert_claims):
+            return "Candidate claims don't match resume level. Verify ownership — ask for specific details about their actual role."
+
+    return ""
+
+
 # ── Behavioral pacing (subtle, not emotional labels) ────────────────────────
 
 def _compute_pacing_hint(
@@ -509,33 +636,26 @@ def _compute_pacing_hint(
     mode: InterviewerMode,
 ) -> str:
     """
-    Produce subtle behavioral guidance for the interviewer.
-    Never surfaces emotional labels to the LLM.
-    Returns actionable hints like "simplify the question" or "".
+    Produce rare, subtle behavioral guidance. Only fires on clear signals.
+    Returns empty string in MOST cases — interviewer should default to
+    calm, technically focused behavior without explicit guidance.
+
+    NEVER produces emotional language. NEVER produces reassurance phrases.
+    Only produces technical redirection hints.
     """
     t = transcript.lower()
     word_count = len(transcript.split())
 
-    # Honest admission — simplify, don't pile on
-    if any(p in t for p in ["i don't know", "i'm not sure", "not familiar", "haven't worked", "i don't remember"]):
-        return "They admitted a gap. Simplify or try a different angle on the same area."
+    # Clear admission of gap — simplify (rare, only on explicit "I don't know")
+    if any(p in t for p in ["i don't know", "i'm not sure", "not familiar"]):
+        if word_count < 20:  # Only if it's genuinely a gap admission, not part of a longer answer
+            return "Gap admitted. Simplify or try a different angle."
 
-    # Very short / hedging — give space
-    hedging = sum(1 for p in ["i think", "maybe", "probably", "i guess", "not exactly sure", "sort of", "kind of"] if p in t)
-    if hedging >= 2 or (word_count < 15 and hedging >= 1):
-        if mode in (InterviewerMode.PRESSURE, InterviewerMode.ESCALATING):
-            return "Candidate is hesitant. Back off intensity slightly — ask something achievable."
-        return ""
-
-    # Deflecting — reframe, don't confront
-    if any(p in t for p in ["that wasn't my responsibility", "someone else handled", "the tool did", "it was automated"]):
-        return "Candidate deflected ownership. Ask from a different angle — a scenario or 'what would you have done?'"
-
-    # Textbook-sounding — push toward personal experience
-    if word_count > 40 and hedging == 0:
-        textbook = any(p in t for p in ["is defined as", "refers to", "is used for", "is a type of", "stands for"])
-        if textbook:
-            return "Answer sounds textbook. Push toward their actual project — what they specifically did, not what 'is typically done.'"
+    # Textbook-sounding — push toward personal experience (only on strong signal)
+    if word_count > 50:
+        textbook_markers = sum(1 for p in ["is defined as", "refers to", "is used for", "is a type of", "stands for", "is known as"] if p in t)
+        if textbook_markers >= 2:
+            return "Textbook answer. Ask what they specifically did on their project."
 
     return ""
 
