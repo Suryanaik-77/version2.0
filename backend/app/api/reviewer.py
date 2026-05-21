@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import TokenPayload, require_reviewer
 from app.db.models import (
-    IntegrityRecord, InterviewSession, InterviewTurn,
+    ExpertReview, IntegrityRecord, InterviewSession, InterviewTurn,
     ReviewerNote, SessionFlag, SessionReport,
 )
 from app.db.session import get_db
@@ -205,6 +205,132 @@ async def get_integrity(
         },
         "event_log": record.event_log or [],
         "verdict": record.reviewer_verdict,
+    }
+
+
+# ── Per-turn expert review (from monolith) ───────────────────────────────────
+
+class ExpertReviewRequest(BaseModel):
+    session_id: str
+    question_turn: int
+    ai_score: float
+    human_score: float
+    dimension_assessments: list = []
+    error_flags: list = []
+    concept_corrections: list = []
+    behavior_ratings: dict = {}
+    verdict: str
+    overall_feedback: str = ""
+
+
+@router.post("/review", status_code=201)
+async def submit_expert_review(
+    body: ExpertReviewRequest,
+    current_user: ReviewerUser,
+    db: DB,
+) -> dict:
+    """Submit a per-turn expert review with human score, dimension assessments,
+    error flags, AI behavior ratings, and verdict."""
+    session = await db.get(InterviewSession, body.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    review = ExpertReview(
+        session_id=body.session_id,
+        turn_number=body.question_turn,
+        reviewer_id=current_user.sub,
+        ai_score=body.ai_score,
+        human_score=body.human_score,
+        score_delta=round(body.human_score - body.ai_score, 1),
+        dimension_assessments=body.dimension_assessments,
+        error_flags=body.error_flags,
+        concept_corrections=body.concept_corrections,
+        behavior_ratings=body.behavior_ratings,
+        verdict=body.verdict,
+        overall_feedback=body.overall_feedback,
+    )
+    db.add(review)
+    await db.flush()
+
+    log.info("reviewer.expert_review", session_id=body.session_id,
+             turn=body.question_turn, reviewer=current_user.sub,
+             verdict=body.verdict, delta=review.score_delta)
+
+    return {
+        "review_id": review.id,
+        "session_id": body.session_id,
+        "turn_number": body.question_turn,
+        "score_delta": review.score_delta,
+        "verdict": body.verdict,
+    }
+
+
+@router.get("/review/{session_id}")
+async def get_session_reviews(
+    session_id: str,
+    _: ReviewerUser,
+    db: DB,
+) -> dict:
+    """Get all expert reviews for a session."""
+    result = await db.execute(
+        select(ExpertReview)
+        .where(ExpertReview.session_id == session_id)
+        .order_by(ExpertReview.turn_number)
+    )
+    reviews = result.scalars().all()
+
+    return {
+        "session_id": session_id,
+        "count": len(reviews),
+        "reviews": [
+            {
+                "review_id": r.id,
+                "turn_number": r.turn_number,
+                "reviewer_id": r.reviewer_id,
+                "ai_score": r.ai_score,
+                "human_score": r.human_score,
+                "score_delta": r.score_delta,
+                "dimension_assessments": r.dimension_assessments,
+                "error_flags": r.error_flags,
+                "behavior_ratings": r.behavior_ratings,
+                "verdict": r.verdict,
+                "overall_feedback": r.overall_feedback,
+                "created_at": r.created_at,
+            }
+            for r in reviews
+        ],
+    }
+
+
+@router.get("/reviews/all")
+async def get_all_reviews(
+    _: ReviewerUser,
+    db: DB,
+    limit: int = Query(100, le=500),
+) -> dict:
+    """Get all expert reviews across sessions (most recent first)."""
+    result = await db.execute(
+        select(ExpertReview)
+        .order_by(desc(ExpertReview.created_at))
+        .limit(limit)
+    )
+    reviews = result.scalars().all()
+
+    return {
+        "count": len(reviews),
+        "reviews": [
+            {
+                "review_id": r.id,
+                "session_id": r.session_id,
+                "turn_number": r.turn_number,
+                "ai_score": r.ai_score,
+                "human_score": r.human_score,
+                "score_delta": r.score_delta,
+                "verdict": r.verdict,
+                "created_at": r.created_at,
+            }
+            for r in reviews
+        ],
     }
 
 

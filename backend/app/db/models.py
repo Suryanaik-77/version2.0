@@ -307,6 +307,36 @@ class SessionFlag(Base):
 
 
 # ══════════════════════════════════════════════════════════════════
+# EXPERT REVIEWS (per-turn)
+# ══════════════════════════════════════════════════════════════════
+
+class ExpertReview(Base):
+    __tablename__ = "expert_reviews"
+
+    id                  = Column(String(36), primary_key=True, default=_uuid)
+    session_id          = Column(String(36),
+                                 ForeignKey("interview_sessions.id", ondelete="CASCADE"),
+                                 nullable=False, index=True)
+    turn_number         = Column(Integer, nullable=False)
+    reviewer_id         = Column(String(36), ForeignKey("users.id"), nullable=False)
+    ai_score            = Column(Float, nullable=False, default=0)
+    human_score         = Column(Float, nullable=False, default=0)
+    score_delta         = Column(Float, nullable=False, default=0)
+    dimension_assessments = Column(JSON, nullable=True)    # [{dimension, assessment}]
+    error_flags         = Column(JSON, nullable=True)      # ["overscored", "missed", ...]
+    concept_corrections = Column(JSON, nullable=True)      # free-text corrections
+    behavior_ratings    = Column(JSON, nullable=True)      # {reasoning_quality, feedback_quality, calibration}
+    verdict             = Column(String(32), nullable=False)  # excellent/good/acceptable/poor/unusable
+    overall_feedback    = Column(Text, nullable=True)
+    created_at          = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_expert_reviews_session", "session_id"),
+        Index("ix_expert_reviews_reviewer", "reviewer_id"),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════
 # INTEGRITY / ANTI-CHEAT
 # ══════════════════════════════════════════════════════════════════
 

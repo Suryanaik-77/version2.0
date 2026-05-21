@@ -4,12 +4,12 @@ import {
   BarChart, Bar, XAxis, YAxis,
   Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts'
-import { adminApi, observabilityApi } from '@/lib/api'
+import { adminApi, observabilityApi, reviewerApi } from '@/lib/api'
 import { Button, Card, Badge, Skeleton, MonoLabel, EmptyState, Divider } from '@/components/ui'
 import { toast } from '@/hooks/useToast'
 import { format } from 'date-fns'
 
-type AdminTab = 'overview' | 'sessions' | 'latency' | 'cost' | 'prompts' | 'users' | 'events' | 'llm' | 'voice' | 'playground' | 'observability'
+type AdminTab = 'overview' | 'sessions' | 'latency' | 'cost' | 'prompts' | 'users' | 'events' | 'llm' | 'voice' | 'playground' | 'observability' | 'reviews'
 
 export default function AdminPage() {
   const [tab, setTab] = useState<AdminTab>('overview')
@@ -26,6 +26,7 @@ export default function AdminPage() {
     { id: 'users',       label: 'Users' },
     { id: 'events',      label: 'Events' },
     { id: 'observability', label: 'Observability' },
+    { id: 'reviews',       label: 'Expert Review' },
   ]
 
   return (
@@ -67,6 +68,7 @@ export default function AdminPage() {
         {tab === 'users'       && <UsersTab />}
         {tab === 'events'      && <EventsTab />}
         {tab === 'observability' && <ObservabilityTab />}
+        {tab === 'reviews'       && <ExpertReviewTab />}
       </div>
     </div>
   )
@@ -1115,6 +1117,324 @@ Your question:`)
             <EmptyState icon="⚡" title="Run a prompt" body="Enter a prompt and click Run to see the LLM response." />
           )}
         </Card>
+      </div>
+    </div>
+  )
+}
+
+// ── Expert Review ─────────────────────────────────────────────────────────────
+
+const REVIEW_DIMS = ['Technical Accuracy', 'Depth & Completeness', 'Clarity', 'Level Calibration']
+const REVIEW_FLAGS = [
+  { id: 'missed', label: 'Missed concept' },
+  { id: 'overscored', label: 'Score too high' },
+  { id: 'underscored', label: 'Score too low' },
+  { id: 'halluc', label: 'Hallucination' },
+  { id: 'vague', label: 'Vague feedback' },
+  { id: 'level', label: 'Level mismatch' },
+]
+const REVIEW_VERDICTS = [
+  { id: 'excellent', label: 'Excellent', grade: 'A+', color: 'var(--green, #22c55e)' },
+  { id: 'good', label: 'Good', grade: 'A', color: 'var(--blue, #3b82f6)' },
+  { id: 'acceptable', label: 'Acceptable', grade: 'B', color: 'var(--text-2)' },
+  { id: 'poor', label: 'Poor', grade: 'C', color: 'var(--yellow, #eab308)' },
+  { id: 'unusable', label: 'Unusable', grade: 'F', color: 'var(--red, #ef4444)' },
+]
+const BEHAVIOR_OPTIONS = {
+  reasoning: [{ v: 'clear', l: 'Clear' }, { v: 'weak', l: 'Weak' }, { v: 'flawed', l: 'Flawed' }],
+  feedback: [{ v: 'actionable', l: 'Actionable' }, { v: 'partial', l: 'Partial' }, { v: 'vague', l: 'Vague' }],
+  calibration: [{ v: 'appropriate', l: 'Appropriate' }, { v: 'lenient', l: 'Too lenient' }, { v: 'harsh', l: 'Too harsh' }],
+}
+
+function ExpertReviewTab() {
+  const qc = useQueryClient()
+  const [selectedSession, setSelectedSession] = useState<string>('')
+  const [reviewTurn, setReviewTurn] = useState<number | null>(null)
+  const [humanScore, setHumanScore] = useState(5)
+  const [dims, setDims] = useState<string[]>(Array(4).fill(''))
+  const [flags, setFlags] = useState<Set<string>>(new Set())
+  const [beh, setBeh] = useState({ reasoning: '', feedback: '', calibration: '' })
+  const [verdict, setVerdict] = useState('')
+  const [feedback, setFeedback] = useState('')
+
+  // Review queue
+  const { data: queue, isLoading: queueLoading } = useQuery({
+    queryKey: ['review-queue'],
+    queryFn: () => reviewerApi.queue({ status: 'pending', limit: 20 }).then(r => r.data),
+    staleTime: 30_000,
+  })
+
+  // Session transcript
+  const { data: transcript } = useQuery({
+    queryKey: ['review-transcript', selectedSession],
+    queryFn: () => reviewerApi.transcript(selectedSession).then(r => r.data),
+    enabled: !!selectedSession,
+  })
+
+  // Existing reviews for session
+  const { data: existingReviews } = useQuery({
+    queryKey: ['review-existing', selectedSession],
+    queryFn: () => reviewerApi.sessionReviews(selectedSession).then(r => r.data),
+    enabled: !!selectedSession,
+  })
+
+  const submit = useMutation({
+    mutationFn: () => {
+      const turn = transcript?.turns?.[reviewTurn!]
+      return reviewerApi.submitReview({
+        session_id: selectedSession,
+        question_turn: turn?.turn_number ?? reviewTurn,
+        ai_score: turn?.avg_score ?? 5,
+        human_score: humanScore,
+        dimension_assessments: REVIEW_DIMS.map((d, i) => ({ dimension: d, assessment: dims[i] || 'not_set' })),
+        error_flags: [...flags],
+        concept_corrections: [],
+        behavior_ratings: { reasoning_quality: beh.reasoning, feedback_quality: beh.feedback, calibration: beh.calibration },
+        verdict,
+        overall_feedback: feedback,
+      })
+    },
+    onSuccess: () => {
+      toast.success('Review saved')
+      qc.invalidateQueries({ queryKey: ['review-existing', selectedSession] })
+      resetForm()
+      setReviewTurn(null)
+    },
+    onError: () => toast.error('Failed to save review'),
+  })
+
+  const approve = useMutation({
+    mutationFn: () => reviewerApi.approve(selectedSession),
+    onSuccess: () => {
+      toast.success('Session approved')
+      qc.invalidateQueries({ queryKey: ['review-queue'] })
+    },
+  })
+
+  const resetForm = () => {
+    setHumanScore(5); setDims(Array(4).fill('')); setFlags(new Set())
+    setBeh({ reasoning: '', feedback: '', calibration: '' }); setVerdict(''); setFeedback('')
+  }
+
+  const toggleFlag = (id: string) => {
+    const next = new Set(flags)
+    next.has(id) ? next.delete(id) : next.add(id)
+    setFlags(next)
+  }
+
+  const turns = transcript?.turns || []
+  const reviewed = new Set((existingReviews?.reviews || []).map((r: any) => r.turn_number))
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr 360px', gap: 20, height: 'calc(100vh - 130px)' }}>
+
+      {/* LEFT: Review queue */}
+      <div style={{ overflowY: 'auto' }}>
+        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 16, color: 'var(--text-0)', marginBottom: 14 }}>Review Queue</h3>
+        {queueLoading ? <DashSkeleton /> : !queue?.queue?.length ? (
+          <EmptyState title="Queue empty" body="No sessions pending review." />
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {queue.queue.map((s: any) => (
+              <div
+                key={s.session_id}
+                onClick={() => { setSelectedSession(s.session_id); setReviewTurn(null); resetForm() }}
+                style={{
+                  padding: '10px 12px', borderRadius: 8, cursor: 'pointer',
+                  background: selectedSession === s.session_id ? 'var(--accent-8)' : 'var(--bg-0)',
+                  border: `1px solid ${selectedSession === s.session_id ? 'var(--accent-25)' : 'var(--border-1)'}`,
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-3)' }}>
+                    {s.session_id?.slice(0, 8)}
+                  </span>
+                  <Badge variant={s.review_status === 'pending' ? 'orange' : 'green'}>{s.review_status}</Badge>
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-1)' }}>{s.domain?.replace(/_/g, ' ')}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
+                  {s.total_turns} turns · Score: {s.overall_score?.toFixed(1) ?? '—'}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* CENTER: Transcript */}
+      <div style={{ overflowY: 'auto', borderLeft: '1px solid var(--border-0)', borderRight: '1px solid var(--border-0)', padding: '0 20px' }}>
+        {!selectedSession ? (
+          <EmptyState title="Select a session" body="Choose a session from the queue to review." />
+        ) : (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, position: 'sticky', top: 0, background: 'var(--bg-1)', padding: '12px 0', zIndex: 1 }}>
+              <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 16, color: 'var(--text-0)' }}>
+                Transcript — {transcript?.session?.domain?.replace(/_/g, ' ')}
+              </h3>
+              <Button variant="primary" size="sm" onClick={() => approve.mutate()} loading={approve.isPending}>
+                Approve Session
+              </Button>
+            </div>
+            {turns.map((t: any, i: number) => (
+              <div
+                key={t.turn_number}
+                onClick={() => { setReviewTurn(i); resetForm(); setHumanScore(t.avg_score ?? 5) }}
+                style={{
+                  padding: '12px 14px', marginBottom: 8, borderRadius: 8, cursor: 'pointer',
+                  background: reviewTurn === i ? 'var(--accent-8)' : 'var(--bg-0)',
+                  border: `1px solid ${reviewTurn === i ? 'var(--accent-25)' : 'var(--border-1)'}`,
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <MonoLabel>Turn {t.turn_number}</MonoLabel>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {reviewed.has(t.turn_number) && <Badge variant="green">Reviewed</Badge>}
+                    {t.avg_score != null && (
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: t.avg_score >= 7 ? 'var(--green, #22c55e)' : t.avg_score >= 5 ? 'var(--text-2)' : 'var(--red, #ef4444)' }}>
+                        AI: {t.avg_score?.toFixed(1)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <p style={{ fontSize: 13, color: 'var(--accent-dim)', marginBottom: 6, fontWeight: 500 }}>
+                  {t.question || '(no question)'}
+                </p>
+                {t.answer && (
+                  <p style={{ fontSize: 12, color: 'var(--text-2)', lineHeight: 1.6, borderLeft: '2px solid var(--border-2)', paddingLeft: 10 }}>
+                    {t.answer}
+                  </p>
+                )}
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+
+      {/* RIGHT: Review form */}
+      <div style={{ overflowY: 'auto' }}>
+        {reviewTurn === null ? (
+          <EmptyState title="Select a turn" body="Click on a turn in the transcript to review it." />
+        ) : (
+          <div>
+            <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 16, color: 'var(--text-0)', marginBottom: 14 }}>
+              Review Turn {turns[reviewTurn]?.turn_number}
+            </h3>
+
+            {/* Human Score */}
+            <Card style={{ padding: 14, marginBottom: 10 }}>
+              <MonoLabel style={{ display: 'block', marginBottom: 8 }}>Human Score</MonoLabel>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <input type="range" min={0} max={10} step={0.5} value={humanScore} onChange={e => setHumanScore(Number(e.target.value))}
+                  style={{ flex: 1 }} />
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 18, color: 'var(--text-0)', width: 40, textAlign: 'center' }}>
+                  {humanScore}
+                </span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-4)', marginTop: 4 }}>
+                <span>AI: {turns[reviewTurn]?.avg_score?.toFixed(1) ?? '—'}</span>
+                <span>Delta: {(humanScore - (turns[reviewTurn]?.avg_score ?? 5)).toFixed(1)}</span>
+              </div>
+            </Card>
+
+            {/* Dimension Assessments */}
+            <Card style={{ padding: 14, marginBottom: 10 }}>
+              <MonoLabel style={{ display: 'block', marginBottom: 8 }}>Dimensions</MonoLabel>
+              {REVIEW_DIMS.map((dim, i) => (
+                <div key={dim} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <span style={{ fontSize: 11, color: 'var(--text-2)', width: 130, flexShrink: 0 }}>{dim}</span>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    {['correct', 'too_high', 'too_low'].map(v => (
+                      <button key={v} onClick={() => { const d = [...dims]; d[i] = v; setDims(d) }}
+                        style={{
+                          padding: '3px 8px', fontSize: 10, borderRadius: 4, cursor: 'pointer',
+                          background: dims[i] === v ? 'var(--accent)' : 'var(--bg-1)',
+                          color: dims[i] === v ? '#fff' : 'var(--text-3)',
+                          border: `1px solid ${dims[i] === v ? 'var(--accent)' : 'var(--border-2)'}`,
+                        }}>
+                        {v.replace('_', ' ')}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </Card>
+
+            {/* Error Flags */}
+            <Card style={{ padding: 14, marginBottom: 10 }}>
+              <MonoLabel style={{ display: 'block', marginBottom: 8 }}>Error Flags</MonoLabel>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {REVIEW_FLAGS.map(f => (
+                  <button key={f.id} onClick={() => toggleFlag(f.id)}
+                    style={{
+                      padding: '4px 10px', fontSize: 10, borderRadius: 12, cursor: 'pointer',
+                      background: flags.has(f.id) ? 'rgba(239,68,68,0.1)' : 'var(--bg-1)',
+                      color: flags.has(f.id) ? 'var(--red, #ef4444)' : 'var(--text-3)',
+                      border: `1px solid ${flags.has(f.id) ? 'rgba(239,68,68,0.3)' : 'var(--border-2)'}`,
+                    }}>
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            </Card>
+
+            {/* AI Behavior Ratings */}
+            <Card style={{ padding: 14, marginBottom: 10 }}>
+              <MonoLabel style={{ display: 'block', marginBottom: 8 }}>AI Behavior</MonoLabel>
+              {Object.entries(BEHAVIOR_OPTIONS).map(([key, options]) => (
+                <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <span style={{ fontSize: 11, color: 'var(--text-2)', width: 80, flexShrink: 0, textTransform: 'capitalize' }}>{key}</span>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    {options.map(o => (
+                      <button key={o.v} onClick={() => setBeh({ ...beh, [key]: o.v })}
+                        style={{
+                          padding: '3px 8px', fontSize: 10, borderRadius: 4, cursor: 'pointer',
+                          background: (beh as any)[key] === o.v ? 'var(--accent)' : 'var(--bg-1)',
+                          color: (beh as any)[key] === o.v ? '#fff' : 'var(--text-3)',
+                          border: `1px solid ${(beh as any)[key] === o.v ? 'var(--accent)' : 'var(--border-2)'}`,
+                        }}>
+                        {o.l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </Card>
+
+            {/* Verdict */}
+            <Card style={{ padding: 14, marginBottom: 10 }}>
+              <MonoLabel style={{ display: 'block', marginBottom: 8 }}>Verdict</MonoLabel>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {REVIEW_VERDICTS.map(v => (
+                  <button key={v.id} onClick={() => setVerdict(v.id)}
+                    style={{
+                      padding: '6px 12px', fontSize: 11, borderRadius: 6, cursor: 'pointer', flex: 1,
+                      background: verdict === v.id ? v.color : 'var(--bg-1)',
+                      color: verdict === v.id ? '#fff' : 'var(--text-3)',
+                      border: `1px solid ${verdict === v.id ? v.color : 'var(--border-2)'}`,
+                      fontWeight: verdict === v.id ? 600 : 400,
+                    }}>
+                    <div>{v.grade}</div>
+                    <div style={{ fontSize: 9 }}>{v.label}</div>
+                  </button>
+                ))}
+              </div>
+            </Card>
+
+            {/* Feedback */}
+            <Card style={{ padding: 14, marginBottom: 10 }}>
+              <MonoLabel style={{ display: 'block', marginBottom: 6 }}>Feedback (optional)</MonoLabel>
+              <textarea value={feedback} onChange={e => setFeedback(e.target.value)} rows={3}
+                placeholder="Additional notes about this evaluation..."
+                style={textareaStyle} />
+            </Card>
+
+            {/* Submit */}
+            <Button variant="primary" style={{ width: '100%' }} loading={submit.isPending}
+              onClick={() => submit.mutate()} disabled={!verdict}>
+              Save Review
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   )

@@ -161,6 +161,19 @@ export const adminApi = {
   playground:     (d: object)    => api.post('/admin/playground', d),
 }
 
+export const reviewerApi = {
+  queue:          (p?: object)   => api.get('/reviewer/queue', { params: p }),
+  transcript:     (id: string)   => api.get(`/reviewer/sessions/${id}/transcript`),
+  integrity:      (id: string)   => api.get(`/reviewer/sessions/${id}/integrity`),
+  submitReview:   (d: object)    => api.post('/reviewer/review', d),
+  sessionReviews: (id: string)   => api.get(`/reviewer/review/${id}`),
+  allReviews:     (p?: object)   => api.get('/reviewer/reviews/all', { params: p }),
+  addNote:        (id: string, d: object) => api.post(`/reviewer/sessions/${id}/notes`, d),
+  override:       (id: string, d: object) => api.post(`/reviewer/sessions/${id}/override`, d),
+  approve:        (id: string)   => api.post(`/reviewer/sessions/${id}/approve`),
+  flag:           (id: string, d: object) => api.post(`/reviewer/sessions/${id}/flag`, d),
+}
+
 export const observabilityApi = {
   summary:  (window?: number) => api.get('/api/observability/summary', { params: window ? { window } : {} }),
   logs:     (p?: object)      => api.get('/api/observability/logs', { params: p }),
