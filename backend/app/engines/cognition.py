@@ -18,6 +18,7 @@ Design principles:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass, field
 
@@ -308,12 +309,12 @@ async def assess(
     # Candidate portrait
     candidate_portrait = _build_candidate_portrait(memory, topic_states)
 
-    # Persist
+    # Persist (fire-and-forget — don't block LLM start)
     cog_state["topics"] = topic_states
     cog_state["current_topic"] = current_topic
     cog_state["last_momentum"] = momentum
     cog_state["last_turn"] = turn_number
-    await _save_state(session_id, cog_state)
+    asyncio.create_task(_save_state(session_id, cog_state))
 
     return CognitionResult(
         strategic_intent=strategic_intent,

@@ -76,11 +76,11 @@ async def run_turn(
     tracker = TurnLatencyTracker(session_id, turn_number=0)
     t_start = time.monotonic()
 
-    # ── Step 1: Parallel reads from Redis ────────────────────────────────────
-    # Both are independent — run concurrently.
-    state, memory = await asyncio.gather(
+    # ── Step 1: Parallel reads from Redis (all independent) ────────────────
+    state, memory, recent_turns = await asyncio.gather(
         get_session(session_id),
         mem.get_snapshot(session_id),
+        r.get_recent_turns(session_id, n=3),
     )
 
     if not state:
@@ -93,8 +93,6 @@ async def run_turn(
     tracker.turn_number = turn_number
 
     # ── Step 3: Build TurnContext ─────────────────────────────────────────────
-    # Prior answers: last 3 turns for reference (questions only)
-    recent_turns = await r.get_recent_turns(session_id, n=3)
     prior_answers = [t.get("question", "") for t in recent_turns]
 
     ctx = TurnContext(
@@ -109,9 +107,8 @@ async def run_turn(
     )
 
     # ── Step 3b: Cognition assessment ────────────────────────────────────────
-    # Read accumulated interview state and produce strategic context.
-    # Pure Python + 1 Redis read/write. <5ms.
-    # Reads previous turn's eval scores from Redis for streak/depth tracking.
+    # prev_eval fetch can overlap with cognition's internal Redis read.
+    # But assess() needs prev_eval as input, so fetch it first (1 Redis call).
     prev_eval = await _get_last_eval_scores(session_id, turn_number - 1)
     cognition = await cog.assess(
         session_id=session_id,

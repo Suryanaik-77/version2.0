@@ -125,7 +125,7 @@ function stopAudio(): void {
 // ── Browser-side VAD + Chunked Recording ─────────────────────────────────────
 
 const SILENCE_THRESHOLD = 15
-const SILENCE_TIMEOUT = 2000
+const SILENCE_TIMEOUT = 1200
 const MAX_CHUNK_MS = 30000
 
 let _micStream: MediaStream | null = null

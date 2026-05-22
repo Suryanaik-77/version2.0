@@ -570,6 +570,13 @@ async def _handle_audio_blob(session_id: str, data: dict) -> None:
         log.warning("ws.blob_empty_transcript", session_id=session_id)
         return
 
+    # Domain-aware transcript correction (deterministic, <1ms)
+    raw_transcript = transcript
+    transcript = _correct_transcript(transcript)
+    if transcript != raw_transcript:
+        log.info("stt.corrected", session_id=session_id,
+                 raw=raw_transcript[:80], corrected=transcript[:80])
+
     # Accumulate
     if session_id not in _transcript_accum:
         _transcript_accum[session_id] = []
@@ -603,53 +610,132 @@ async def _handle_audio_blob(session_id: str, data: dict) -> None:
         hub.register_stream(session_id, pipeline_task)
 
 
+# ── Domain-aware transcript correction (deterministic, <1ms) ─────────────────
+# Fixes common STT phonetic confusions for VLSI/semiconductor vocabulary.
+# No LLM call. Pure regex/dict replacement. Runs on every transcript.
+
+import re as _re
+
+_VLSI_CORRECTIONS: list[tuple[str, str]] = [
+    # Phonetic confusions (common STT errors for semiconductor terms)
+    (r'\bbody\b', 'OD'),             # "body" near layout context → OD (oxide diffusion)
+    (r'\bpolly\b', 'poly'),
+    (r'\bpoly (?:silicon|silicone)\b', 'polysilicon'),
+    (r'\benv well\b', 'n-well'),
+    (r'\bn well\b', 'n-well'),
+    (r'\bp well\b', 'p-well'),
+    (r'\bp sub\b', 'p-sub'),
+    (r'\bn sub\b', 'n-sub'),
+    (r'\bmetal won\b', 'metal one'),
+    (r'\bmetal to\b', 'metal two'),
+    (r'\bsub straight\b', 'substrate'),
+    (r'\bsubstrait\b', 'substrate'),
+    (r'\bguard rain\b', 'guard ring'),
+    (r'\bguard rang\b', 'guard ring'),
+    (r'\bcommon centre\b', 'common centroid'),
+    (r'\bcommon central\b', 'common centroid'),
+    (r'\binter digitation\b', 'interdigitation'),
+    (r'\binter digital\b', 'interdigitation'),
+    (r'\bD R C\b', 'DRC'),
+    (r'\bL V S\b', 'LVS'),
+    (r'\bP E X\b', 'PEX'),
+    (r'\bE S D\b', 'ESD'),
+    (r'\bC T S\b', 'CTS'),
+    (r'\bS T A\b', 'STA'),
+    (r'\bU V M\b', 'UVM'),
+    (r'\bU P F\b', 'UPF'),
+    (r'\bC D C\b', 'CDC'),
+    (r'\bE C O\b', 'ECO'),
+    (r'\bI R drop\b', 'IR drop'),
+    (r'\bgm over id\b', 'gm/id'),
+    (r'\bgm by id\b', 'gm/id'),
+    (r'\bfolded cascade\b', 'folded cascode'),
+    (r'\btele scopic\b', 'telescopic'),
+    (r'\bband gap\b', 'bandgap'),
+    (r'\bclock tree\b', 'clock tree'),
+    (r'\bsetup hold\b', 'setup and hold'),
+    (r'\bvirtual so\b', 'Virtuoso'),
+    (r'\bvirtuoso\b', 'Virtuoso'),
+    (r'\bcalibre\b', 'Calibre'),
+    (r'\bI see see two\b', 'ICC2'),
+    (r'\bI C C 2\b', 'ICC2'),
+    (r'\bprime time\b', 'PrimeTime'),
+]
+
+# Context-aware corrections: only apply "body→OD" when semiconductor context is present
+_SEMICONDUCTOR_CONTEXT = frozenset([
+    'poly', 'metal', 'via', 'contact', 'diffusion', 'layout', 'drc', 'lvs',
+    'transistor', 'nmos', 'pmos', 'well', 'substrate', 'guard ring', 'od',
+    'active', 'layer', 'mask', 'routing', 'placement', 'extraction',
+])
+
+
+def _correct_transcript(text: str) -> str:
+    """
+    Apply deterministic VLSI vocabulary corrections to STT output.
+    <1ms execution. No LLM. Pure regex.
+    Only applies context-sensitive corrections when semiconductor vocabulary
+    is detected nearby.
+    """
+    text_lower = text.lower()
+
+    # Check semiconductor context — need 2+ domain keywords for high confidence
+    context_count = sum(1 for kw in _SEMICONDUCTOR_CONTEXT if kw in text_lower)
+    has_strong_context = context_count >= 2
+
+    # Apply corrections
+    for pattern, replacement in _VLSI_CORRECTIONS:
+        # Context-sensitive: "body→OD" only with strong semiconductor context
+        if replacement == 'OD' and not has_strong_context:
+            continue
+        text = _re.sub(pattern, replacement, text, flags=_re.IGNORECASE)
+
+    return text
+
+
+_stt_client = None
+
+def _get_stt_client():
+    """Singleton AsyncOpenAI client for STT. Created once, reused forever."""
+    global _stt_client
+    if _stt_client is None:
+        from openai import AsyncOpenAI
+        from app.config import get_settings
+        _stt_client = AsyncOpenAI(api_key=get_settings().OPENAI_API_KEY, timeout=10.0)
+    return _stt_client
+
+
 async def _transcribe_blob(stt, audio_bytes: bytes, fmt: str, session_id: str) -> str:
-    """Transcribe audio blob. Same approach as monolith — save to temp file, send directly."""
+    """Transcribe audio blob using AsyncOpenAI directly. No temp file, no executor."""
     import time
-    import tempfile
-    import os
+    import io
 
     if len(audio_bytes) < 1000:
         return ""
 
     t0 = time.monotonic()
-    tmp_path = None
     try:
-        # Save to temp file with correct extension (same as monolith)
-        with tempfile.NamedTemporaryFile(suffix=f".{fmt}", delete=False) as f:
-            f.write(audio_bytes)
-            tmp_path = f.name
+        client = _get_stt_client()
+        # Pass bytes directly as a file-like object with name hint
+        audio_file = io.BytesIO(audio_bytes)
+        audio_file.name = f"audio.{fmt}"
 
-        # Use sync OpenAI client in executor (same as monolith)
-        from openai import OpenAI
-        from app.config import get_settings
-        settings = get_settings()
-        client = OpenAI(api_key=settings.OPENAI_API_KEY)
-
-        def _sync_transcribe():
-            with open(tmp_path, "rb") as audio_file:
-                response = client.audio.transcriptions.create(
-                    model="gpt-4o-mini-transcribe",
-                    file=audio_file,
-                    language="en",
-                )
-            return response.text.strip() if hasattr(response, "text") else str(response).strip()
-
-        loop = asyncio.get_event_loop()
-        transcript = await asyncio.wait_for(
-            loop.run_in_executor(None, _sync_transcribe),
+        response = await asyncio.wait_for(
+            client.audio.transcriptions.create(
+                model="gpt-4o-mini-transcribe",
+                file=audio_file,
+                language="en",
+            ),
             timeout=10.0,
         )
+        transcript = response.text.strip() if hasattr(response, "text") else str(response).strip()
         elapsed = int((time.monotonic() - t0) * 1000)
         log.info("stt.blob_done", session_id=session_id, chars=len(transcript), latency_ms=elapsed)
         return transcript
     except Exception as exc:
-        log.error("stt.blob_error", session_id=session_id, error=str(exc))
+        elapsed = int((time.monotonic() - t0) * 1000)
+        log.error("stt.blob_error", session_id=session_id, error=str(exc), latency_ms=elapsed)
         return ""
-    finally:
-        if tmp_path:
-            try: os.unlink(tmp_path)
-            except: pass
 
 
 async def _handle_admin_end_session(session_id: str) -> None:
