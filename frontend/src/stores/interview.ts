@@ -207,7 +207,6 @@ function _beginRecording(): void {
 
   _recorder.onstop = () => {
     if (_chunks.length === 0 || !_speechDetected || !_recording) {
-      // No speech or AI speaking — discard
       _chunks = []
       return
     }
@@ -217,24 +216,25 @@ function _beginRecording(): void {
 
     useInterview.setState({ audioState: 'thinking' })
 
-    const reader = new FileReader()
-    reader.onloadend = () => {
-      if (_ws && _ws.readyState === WebSocket.OPEN && reader.result) {
-        const b64 = (reader.result as string).split(',')[1]
-        _ws.send(JSON.stringify({
-          type: 'AUDIO_BLOB',
-          audio: b64,
-          format: 'webm',
-          duration_ms: dur,
-        }))
-      }
-      // Restart only if still listening (30s chunk → keep recording)
-      if (_recording) setTimeout(_beginRecording, 50)
+    if (_ws && _ws.readyState === WebSocket.OPEN) {
+      // Send metadata as text frame first, then audio as binary frame
+      // Eliminates base64 encoding overhead (50-100ms) and 33% size bloat
+      _ws.send(JSON.stringify({
+        type: 'AUDIO_META',
+        format: 'webm',
+        duration_ms: dur,
+      }))
+      // Binary frame — zero encoding, zero size bloat
+      blob.arrayBuffer().then(buf => {
+        if (_ws && _ws.readyState === WebSocket.OPEN) {
+          _ws.send(buf)
+        }
+      })
     }
-    reader.readAsDataURL(blob)
+    if (_recording) setTimeout(_beginRecording, 50)
   }
 
-  _recorder.start(500)
+  _recorder.start(100)  // 100ms chunks — reduces hidden buffer delay at stop time
 
   // Silence detection
   const buf = new Uint8Array(_analyser.frequencyBinCount)

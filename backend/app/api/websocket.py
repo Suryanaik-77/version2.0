@@ -358,12 +358,26 @@ async def _receive_loop(
                 break
             
             if "bytes" in message and message["bytes"]:
-                # Audio chunk — dispatch to STT pipeline (Phase 3)
-                # Non-blocking: create_task returns immediately
-                asyncio.create_task(
-                    _handle_audio_chunk(session_id, message["bytes"]),
-                    name=f"audio_{session_id}",
-                )
+                audio_bytes = message["bytes"]
+                # Check if this is a binary audio blob (preceded by AUDIO_META)
+                meta = _pending_audio_meta.pop(session_id, None)
+                if meta:
+                    # New binary transport — audio blob without base64
+                    asyncio.create_task(
+                        _handle_audio_blob(session_id, {
+                            "audio_bytes": audio_bytes,  # raw bytes, no base64
+                            "format": meta.get("format", "webm"),
+                            "duration_ms": meta.get("duration_ms", 0),
+                            "_binary": True,
+                        }),
+                        name=f"audio_blob_{session_id}",
+                    )
+                else:
+                    # PCM audio chunk from server-side VAD (Phase 3)
+                    asyncio.create_task(
+                        _handle_audio_chunk(session_id, audio_bytes),
+                        name=f"audio_{session_id}",
+                    )
                 
             elif "text" in message and message["text"]:
                 asyncio.create_task(
@@ -445,6 +459,7 @@ from app.voice import pipeline as voice_pipeline
 # Session-isolated: one dict entry per active session
 _audio_accumulators: dict[str, AudioAccumulator] = {}
 _turn_counters: dict[str, int] = {}  # session_id → current turn number
+_pending_audio_meta: dict[str, dict] = {}  # session_id → {format, duration_ms}
 
 
 # ── Audio chunk handler (Phase 3 — VAD + STT + pipeline) ─────────────────────
@@ -515,8 +530,15 @@ async def _handle_text_message(
         # Relay barge-in event to confirm interruption
         await r.publish_event(session_id, barge_in_event(session_id).to_json())
 
+    elif event_type == "AUDIO_META":
+        # New binary transport: metadata arrives as text, audio follows as binary frame
+        _pending_audio_meta[session_id] = {
+            "format": data.get("format", "webm"),
+            "duration_ms": data.get("duration_ms", 0),
+        }
+
     elif event_type == "AUDIO_BLOB":
-        # Browser-side VAD sent complete audio blob as base64
+        # Legacy base64 transport (backward compatible)
         asyncio.create_task(
             _handle_audio_blob(session_id, data),
             name=f"audio_blob_{session_id}",
@@ -542,20 +564,21 @@ _transcript_accum: dict[str, list[str]] = {}
 async def _handle_audio_blob(session_id: str, data: dict) -> None:
     """
     Handle complete audio blob from browser-side VAD.
-    Decodes base64, transcribes via STT, accumulates chunks,
-    then launches voice pipeline when silence-triggered (is_final).
+    Supports both binary transport (raw bytes) and legacy base64 transport.
     """
-    import base64
-
-    audio_b64 = data.get("audio", "")
     audio_format = data.get("format", "webm")
     duration_ms = data.get("duration_ms", 0)
-    is_final = data.get("is_final", True)
 
-    if not audio_b64:
-        return
-
-    audio_bytes = base64.b64decode(audio_b64)
+    # Binary transport (new) — raw bytes, no decoding needed
+    if data.get("_binary"):
+        audio_bytes = data["audio_bytes"]
+    else:
+        # Legacy base64 transport (backward compatible)
+        import base64
+        audio_b64 = data.get("audio", "")
+        if not audio_b64:
+            return
+        audio_bytes = base64.b64decode(audio_b64)
     log.info("ws.audio_blob", session_id=session_id, bytes=len(audio_bytes),
              duration_ms=duration_ms, format=audio_format)
 
