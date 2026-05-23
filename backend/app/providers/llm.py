@@ -271,95 +271,99 @@ def _get_bedrock_client():
 async def _bedrock_generate(
     model_id: str, messages: list, max_tokens: int, temperature: float, session_id: str
 ) -> AsyncIterator[str]:
-    """Call Bedrock synchronously in executor, yield result as tokens."""
+    """Call Bedrock with TRUE streaming via invoke_model_with_response_stream.
+    Yields tokens as they arrive — no fake buffering."""
     import json as _json
 
-    def _call():
+    is_claude = "anthropic" in model_id.lower()
+    is_llama = "meta" in model_id.lower() or "llama" in model_id.lower()
+    is_nova = "amazon" in model_id.lower() or "nova" in model_id.lower()
+
+    system_text = ""
+    user_text = ""
+    for msg in messages:
+        if msg.get("role") == "system":
+            system_text += msg.get("content", "") + "\n"
+        elif msg.get("role") == "user":
+            user_text += msg.get("content", "") + "\n"
+
+    if is_claude:
+        filtered = [m for m in messages if m.get("role") != "system"]
+        if not filtered:
+            filtered = [{"role": "user", "content": system_text.strip()}]
+            system_text = ""
+        for i, m in enumerate(filtered):
+            if isinstance(m.get("content"), str):
+                filtered[i] = {"role": m["role"], "content": [{"type": "text", "text": m["content"]}]}
+        body = {
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "messages": filtered,
+        }
+        if system_text.strip():
+            body["system"] = [{"type": "text", "text": system_text.strip(), "cache_control": {"type": "ephemeral"}}]
+    elif is_llama:
+        prompt = ""
+        if system_text:
+            prompt += f"<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{system_text.strip()}<|eot_id|>"
+        prompt += f"<|start_header_id|>user<|end_header_id|>\n\n{user_text.strip()}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
+        body = {"prompt": prompt, "max_gen_len": max_tokens, "temperature": temperature}
+    elif is_nova:
+        body = {
+            "inferenceConfig": {"maxTokens": max_tokens, "temperature": temperature},
+            "messages": [{"role": "user", "content": [{"text": user_text.strip()}]}],
+        }
+        if system_text.strip():
+            body["system"] = [{"text": system_text.strip()}]
+    else:
+        body = {"max_tokens": max_tokens, "temperature": temperature, "messages": messages}
+
+    def _stream_call():
+        """Sync streaming call in executor — yields chunks via queue."""
         client = _get_bedrock_client()
-        is_claude = "anthropic" in model_id.lower()
-        is_llama = "meta" in model_id.lower() or "llama" in model_id.lower()
-        is_nova = "amazon" in model_id.lower() or "nova" in model_id.lower()
-        is_deepseek = "deepseek" in model_id.lower()
-
-        system_text = ""
-        user_text = ""
-        for msg in messages:
-            if msg.get("role") == "system":
-                system_text += msg.get("content", "") + "\n"
-            elif msg.get("role") == "user":
-                user_text += msg.get("content", "") + "\n"
-
-        if is_claude:
-            filtered = [m for m in messages if m.get("role") != "system"]
-            if not filtered:
-                filtered = [{"role": "user", "content": system_text.strip()}]
-                system_text = ""
-            for i, m in enumerate(filtered):
-                if isinstance(m.get("content"), str):
-                    filtered[i] = {"role": m["role"], "content": [{"type": "text", "text": m["content"]}]}
-            body = {
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-                "messages": filtered,
-            }
-            if system_text.strip():
-                body["system"] = [{"type": "text", "text": system_text.strip(), "cache_control": {"type": "ephemeral"}}]
-        elif is_llama:
-            prompt = ""
-            if system_text:
-                prompt += f"<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{system_text.strip()}<|eot_id|>"
-            prompt += f"<|start_header_id|>user<|end_header_id|>\n\n{user_text.strip()}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
-            body = {"prompt": prompt, "max_gen_len": max_tokens, "temperature": temperature}
-        elif is_nova:
-            body = {
-                "inferenceConfig": {"maxTokens": max_tokens, "temperature": temperature},
-                "messages": [{"role": "user", "content": [{"text": user_text.strip()}]}],
-            }
-            if system_text.strip():
-                body["system"] = [{"text": system_text.strip()}]
-        elif is_deepseek:
-            formatted = f"<｜begin▁of▁sentence｜>"
-            if system_text:
-                formatted += f"<｜System｜>{system_text.strip()}"
-            formatted += f"<｜User｜>{user_text.strip()}<｜Assistant｜>"
-            body = {"prompt": formatted, "max_tokens": min(max_tokens, 8192), "temperature": temperature}
-        else:
-            body = {"max_tokens": max_tokens, "temperature": temperature, "messages": messages}
-
-        resp = client.invoke_model(
+        resp = client.invoke_model_with_response_stream(
             modelId=model_id, contentType="application/json",
             accept="application/json", body=_json.dumps(body)
         )
-        result_body = _json.loads(resp["body"].read())
+        chunks = []
+        for event in resp["body"]:
+            chunk_data = _json.loads(event.get("chunk", {}).get("bytes", b"{}"))
 
-        if is_claude:
-            return result_body["content"][0]["text"].strip()
-        elif is_llama:
-            return result_body.get("generation", "").strip()
-        elif is_nova:
-            return result_body.get("output", {}).get("message", {}).get("content", [{}])[0].get("text", "").strip()
-        elif is_deepseek:
-            choices = result_body.get("choices", [])
-            return choices[0].get("text", "").strip() if choices else ""
-        elif "content" in result_body:
-            return result_body["content"][0]["text"].strip()
-        elif "choices" in result_body:
-            c = result_body["choices"][0]
-            return c.get("message", {}).get("content", c.get("text", "")).strip()
-        return _json.dumps(result_body)
+            # Claude streaming format
+            if is_claude:
+                if chunk_data.get("type") == "content_block_delta":
+                    text = chunk_data.get("delta", {}).get("text", "")
+                    if text:
+                        chunks.append(text)
+            # Llama/Nova/generic — accumulate full response
+            elif "generation" in chunk_data:
+                chunks.append(chunk_data["generation"])
+            elif "output" in chunk_data:
+                text = chunk_data.get("output", {}).get("message", {}).get("content", [{}])[0].get("text", "")
+                if text:
+                    chunks.append(text)
+
+        return chunks
 
     import asyncio
     loop = asyncio.get_event_loop()
     t0 = time.monotonic()
     try:
-        result = await asyncio.wait_for(loop.run_in_executor(None, _call), timeout=15.0)
+        chunks = await asyncio.wait_for(loop.run_in_executor(None, _stream_call), timeout=15.0)
         elapsed = int((time.monotonic() - t0) * 1000)
-        log.info("llm.bedrock", model=model_id, latency_ms=elapsed, chars=len(result))
+
+        full_text = "".join(chunks)
+        log.info("llm.bedrock", model=model_id, latency_ms=elapsed, chars=len(full_text),
+                 chunks=len(chunks))
         record_event("llm.bedrock", session_id=session_id, model=model_id, latency_ms=elapsed)
         track_llm_call(session_id=session_id, step="LLM_question", model=model_id,
-                        latency_ms=elapsed, output_tokens=len(result.split()), status="success")
-        yield result
+                        latency_ms=elapsed, output_tokens=len(full_text.split()), status="success")
+
+        # Yield chunks individually for sentence chunker
+        for chunk in chunks:
+            yield chunk
+
     except Exception as exc:
         elapsed = int((time.monotonic() - t0) * 1000)
         log.error("llm.bedrock_error", model=model_id, error=str(exc))

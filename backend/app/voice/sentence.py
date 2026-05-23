@@ -30,9 +30,9 @@ import structlog
 log = structlog.get_logger(__name__)
 
 # Tune these for perceived naturalness vs. chunk size tradeoff
-MIN_HARD_CHARS  = 25    # Don't split on "Yes." — too short to TTS separately
-MIN_SOFT_CHARS  = 70    # Minimum chars before comma can trigger a split
-MAX_CHARS       = 220   # Force-split runaway sentences (e.g., LLM goes verbose)
+MIN_HARD_CHARS  = 15    # Lower threshold — start TTS sooner for faster first audio
+MIN_SOFT_CHARS  = 50    # Lower soft boundary — allow earlier comma splits
+MAX_CHARS       = 180   # Tighter force-split — interviewer questions should be short
 
 # Hard sentence end: [.!?] followed by whitespace or end-of-string
 _HARD_END = re.compile(r'[.!?](?:\s+|$)')

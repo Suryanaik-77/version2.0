@@ -110,12 +110,13 @@ async def run_turn_pipeline(
     # Notify client: turn is starting
     await ws_hub.publish_to_session(session_id, turn_start_event(session_id, turn_number).to_json())
 
-    # Read mode BEFORE question generation — for turn persistence
+    # Read mode for turn persistence (fire-and-forget, don't block pipeline)
     _mode_at_start = "PROBING"
     try:
-        _state_snap = await interview.get_session(session_id)
-        if _state_snap:
-            _mode_at_start = _state_snap.mode.value
+        from app.core import redis as r_core
+        _state_raw = await r_core.get_session_state(session_id)
+        if _state_raw:
+            _mode_at_start = _state_raw.mode.value
     except Exception:
         pass
 
