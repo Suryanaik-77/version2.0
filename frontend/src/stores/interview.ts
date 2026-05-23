@@ -217,33 +217,21 @@ function _beginRecording(): void {
   }
 
   _recorder.onstop = () => {
-    if (_chunks.length === 0 || !_speechDetected || !_recording) {
-      _chunks = []
-      return
-    }
-    const blob = new Blob(_chunks, { type: 'audio/webm' })
+  if (_chunks.length === 0 || !_speechDetected || !_recording) {
     _chunks = []
-    const dur = Date.now() - _recStart
-
-    useInterview.setState({ audioState: 'thinking' })
-
-    if (_ws && _ws.readyState === WebSocket.OPEN) {
-      // Send metadata as text frame first, then audio as binary frame
-      // Eliminates base64 encoding overhead (50-100ms) and 33% size bloat
-      _ws.send(JSON.stringify({
-        type: 'AUDIO_META',
-        format: 'webm',
-        duration_ms: dur,
-      }))
-      // Binary frame — zero encoding, zero size bloat
-      blob.arrayBuffer().then(buf => {
-        if (_ws && _ws.readyState === WebSocket.OPEN) {
-          _ws.send(buf)
-        }
-      })
-    }
-    if (_recording) setTimeout(_beginRecording, 50)
+    return
   }
+
+  _chunks = []
+
+  useInterview.setState({ audioState: 'thinking' })
+
+  // Deepgram already received streaming chunks live.
+
+  if (_recording) {
+    setTimeout(_beginRecording, 50)
+  }
+}
 
   _recorder.start(100)  // 100ms chunks — reduces hidden buffer delay at stop time
 
