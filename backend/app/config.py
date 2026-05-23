@@ -1,5 +1,19 @@
+import os
+from pathlib import Path
+from dotenv import load_dotenv
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+
+# Load .env from backend/ or parent version2.0/ directory
+_backend_dir = Path(__file__).resolve().parent.parent  # backend/
+_env_candidates = [
+    _backend_dir / ".env",           # backend/.env
+    _backend_dir.parent / ".env",    # version2.0/.env
+]
+for _env_path in _env_candidates:
+    if _env_path.exists():
+        load_dotenv(_env_path)
+        break
 
 
 class Settings(BaseSettings):

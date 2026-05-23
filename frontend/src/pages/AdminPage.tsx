@@ -11,7 +11,7 @@ import { Button, Card, Badge, Skeleton, MonoLabel, EmptyState, Divider } from '@
 import { toast } from '@/hooks/useToast'
 import { format } from 'date-fns'
 
-type AdminTab = 'sessions' | 'latency' | 'prompts' | 'users' | 'events' | 'llm' | 'voice' | 'playground' | 'observability' | 'reviews'
+type AdminTab = 'sessions' | 'latency' | 'prompts' | 'users' | 'events' | 'llm' | 'voice' | 'playground' | 'observability' | 'reviews' | 'anticheat'
 
 export default function AdminPage() {
   const [tab, setTab] = useState<AdminTab>('sessions')
@@ -27,6 +27,7 @@ export default function AdminPage() {
     { id: 'events',      label: 'Events' },
     { id: 'observability', label: 'Observability' },
     { id: 'reviews',       label: 'Expert Review' },
+    { id: 'anticheat',    label: 'Anti-Cheat' },
   ]
 
   return (
@@ -67,6 +68,7 @@ export default function AdminPage() {
         {tab === 'events'      && <EventsTab />}
         {tab === 'observability' && <ObservabilityTab />}
         {tab === 'reviews'       && <ExpertReviewTab />}
+        {tab === 'anticheat'    && <AnticheatTab />}
       </div>
     </div>
   )
@@ -966,9 +968,148 @@ Your question:`)
   )
 }
 
-// ── Expert Review and Observability tabs extracted to separate files ──────────
-// See: pages/admin/ExpertReviewTab.tsx and pages/admin/ObservabilityTab.tsx
-// (removed — now in ExpertReviewTab.tsx)
+// ── Anti-Cheat Config ─────────────────────────────────────────────────────────
+
+const ANTICHEAT_FEATURES: { key: string; label: string; description: string; category: string }[] = [
+  // Browser Detection
+  { key: 'tab_switch_detection', label: 'Tab Switch Detection', description: 'Detect when candidate switches browser tabs', category: 'Browser' },
+  { key: 'clipboard_monitoring', label: 'Clipboard Monitoring', description: 'Detect copy/paste events during interview', category: 'Browser' },
+  { key: 'devtools_detection', label: 'DevTools Detection', description: 'Detect if browser developer tools are opened', category: 'Browser' },
+  { key: 'split_screen_detection', label: 'Split Screen Detection', description: 'Detect if window is resized below 80% of screen', category: 'Browser' },
+  { key: 'window_blur_tracking', label: 'Window Blur Tracking', description: 'Track when browser window loses focus', category: 'Browser' },
+  // AI Detection
+  { key: 'ai_extension_detection', label: 'AI Extension Detection', description: 'Scan for ChatGPT, Copilot, Grammarly AI extensions', category: 'AI Detection' },
+  { key: 'dom_overlay_detection', label: 'DOM Overlay Detection', description: 'Detect AI answer overlays injected into the page', category: 'AI Detection' },
+  // Behavioral Analysis
+  { key: 'behavioral_analysis', label: 'Behavioral Analysis', description: 'Analyze speech patterns — filler words, self-corrections, pronoun usage', category: 'Behavioral' },
+  { key: 'pause_consistency_check', label: 'Pause Consistency', description: 'Check for unnaturally consistent thinking pauses across questions', category: 'Behavioral' },
+  { key: 'answer_sophistication_check', label: 'Answer Sophistication', description: 'Flag expert terminology from candidates below expected level', category: 'Behavioral' },
+]
+
+function AnticheatTab() {
+  const qc = useQueryClient()
+  const { data, isLoading } = useQuery({
+    queryKey: ['admin-anticheat-config'],
+    queryFn: () => adminApi.anticheatConfig().then(r => r.data),
+    staleTime: 30_000,
+  })
+
+  const [features, setFeatures] = useState<Record<string, boolean>>({})
+
+  React.useEffect(() => {
+    if (data?.features) setFeatures(data.features)
+  }, [data])
+
+  const save = useMutation({
+    mutationFn: () => adminApi.setAnticheatConfig({ features }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin-anticheat-config'] })
+      toast.success('Anti-cheat settings saved')
+    },
+    onError: () => toast.error('Failed to save'),
+  })
+
+  const toggleFeature = (key: string) => {
+    setFeatures(f => ({ ...f, [key]: !f[key] }))
+  }
+
+  const enableAll = () => {
+    const all: Record<string, boolean> = {}
+    ANTICHEAT_FEATURES.forEach(f => { all[f.key] = true })
+    setFeatures(all)
+  }
+
+  const disableAll = () => {
+    const all: Record<string, boolean> = {}
+    ANTICHEAT_FEATURES.forEach(f => { all[f.key] = false })
+    setFeatures(all)
+  }
+
+  if (isLoading) return <DashSkeleton />
+
+  const enabledCount = Object.values(features).filter(Boolean).length
+  const totalCount = ANTICHEAT_FEATURES.length
+
+  // Group by category
+  const categories = [...new Set(ANTICHEAT_FEATURES.map(f => f.category))]
+
+  return (
+    <div style={{ maxWidth: 680 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+        <div>
+          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 20, color: 'var(--text-0)', marginBottom: 4 }}>
+            Anti-Cheat Configuration
+          </h2>
+          <p style={{ fontSize: 12, color: 'var(--text-3)' }}>
+            {enabledCount}/{totalCount} features enabled — toggle individual integrity checks
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button onClick={enableAll} style={pillBtnStyle}>Enable All</button>
+          <button onClick={disableAll} style={{ ...pillBtnStyle, color: 'var(--red, #ef4444)' }}>Disable All</button>
+        </div>
+      </div>
+
+      {categories.map(cat => (
+        <div key={cat} style={{ marginBottom: 20 }}>
+          <p style={{
+            fontSize: 10, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em',
+            textTransform: 'uppercase', color: 'var(--text-4)', marginBottom: 10,
+          }}>
+            {cat}
+          </p>
+          <Card style={{ padding: 0, overflow: 'hidden' }}>
+            {ANTICHEAT_FEATURES.filter(f => f.category === cat).map((feat, i, arr) => (
+              <div
+                key={feat.key}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 14,
+                  padding: '14px 18px',
+                  borderBottom: i < arr.length - 1 ? '1px solid var(--border-0)' : 'none',
+                }}
+              >
+                <div style={{ flex: 1 }}>
+                  <p style={{ fontSize: 13, color: 'var(--text-0)', fontWeight: 500, marginBottom: 2 }}>
+                    {feat.label}
+                  </p>
+                  <p style={{ fontSize: 11, color: 'var(--text-3)', lineHeight: 1.4 }}>
+                    {feat.description}
+                  </p>
+                </div>
+                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', flexShrink: 0 }}>
+                  <div
+                    onClick={() => toggleFeature(feat.key)}
+                    style={{
+                      width: 40, height: 22, borderRadius: 11,
+                      background: features[feat.key] ? 'var(--green, #22c55e)' : 'var(--border-2)',
+                      position: 'relative', transition: 'background 0.2s',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <div style={{
+                      width: 18, height: 18, borderRadius: '50%', background: '#fff',
+                      position: 'absolute', top: 2,
+                      left: features[feat.key] ? 20 : 2,
+                      transition: 'left 0.2s',
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
+                    }} />
+                  </div>
+                </label>
+              </div>
+            ))}
+          </Card>
+        </div>
+      ))}
+
+      <Button variant="primary" loading={save.isPending} onClick={() => save.mutate()} style={{ width: '100%' }}>
+        Save Anti-Cheat Settings
+      </Button>
+      {save.isSuccess && (
+        <p style={{ fontSize: 11, color: 'var(--green, #22c55e)', marginTop: 8, textAlign: 'center' }}>Settings saved — active for new sessions</p>
+      )}
+    </div>
+  )
+}
 
 // ── Shared ─────────────────────────────────────────────────────────────────────
 
