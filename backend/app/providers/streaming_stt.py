@@ -66,6 +66,7 @@ class DeepgramStreamingSTT:
         self._utterance_start = None
         self._connect_time = None
         self._last_audio_time = time.monotonic()
+        self._audio_chunk_count = 0
 
     async def connect(self) -> bool:
         """Connect to Deepgram streaming API. Returns True on success."""
@@ -116,22 +117,62 @@ class DeepgramStreamingSTT:
     async def send_audio(self, audio_bytes: bytes) -> None:
         """Send audio chunk to Deepgram. Called for each browser audio frame."""
         if not self._connected or not self._ws:
-            # Attempt auto-reconnect if disconnected
+            # Auto-reconnect for new turn (fresh Deepgram connection)
             if not self._reconnecting:
                 asyncio.create_task(self._auto_reconnect())
             return
         try:
             await self._ws.send(audio_bytes)
             self._last_audio_time = time.monotonic()
+            self._audio_chunk_count += 1
             if self._utterance_start is None:
                 self._utterance_start = time.monotonic()
+                log.info("streaming_stt.speech_start",
+                         session_id=self.session_id)
         except Exception as exc:
             log.warning("streaming_stt.send_failed",
                         session_id=self.session_id, error=str(exc))
             self._connected = False
-            # Trigger reconnect
             if not self._reconnecting:
                 asyncio.create_task(self._auto_reconnect())
+
+    async def reset_for_new_turn(self) -> None:
+        """Close current Deepgram connection and open fresh one for next turn.
+        Solves WebM container header issue when MediaRecorder restarts."""
+        log.info("streaming_stt.resetting_for_new_turn", session_id=self.session_id)
+        self._connected = False
+
+        # Cancel existing tasks
+        for task in [self._receive_task, self._keepalive_task]:
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+        # Close old connection
+        if self._ws:
+            try:
+                await self._ws.send(json.dumps({"type": "CloseStream"}))
+                await self._ws.close()
+            except Exception:
+                pass
+            self._ws = None
+
+        # Reset state
+        self._final_transcript = ""
+        self._partial_transcript = ""
+        self._utterance_start = None
+        self._audio_chunk_count = 0
+
+        # Reconnect fresh
+        success = await self.connect()
+        if success:
+            log.info("streaming_stt.new_turn_ready", session_id=self.session_id)
+        else:
+            log.error("streaming_stt.new_turn_reconnect_failed",
+                      session_id=self.session_id)
 
     async def _auto_reconnect(self) -> None:
         """Attempt to reconnect Deepgram WebSocket after disconnect."""

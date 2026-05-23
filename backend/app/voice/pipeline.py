@@ -169,6 +169,20 @@ async def run_turn_pipeline(
             turn_complete_event(session_id, turn_number, elapsed_ms).to_json(),
         )
 
+        # Reset streaming STT for next turn (fresh Deepgram connection)
+        # Solves: MediaRecorder restart creates new WebM container header
+        # that confuses the existing Deepgram WebSocket stream
+        try:
+            from app.providers.streaming_stt import _active_stt
+            stt_instance = _active_stt.get(session_id)
+            if stt_instance:
+                asyncio.create_task(
+                    stt_instance.reset_for_new_turn(),
+                    name=f"stt_reset_{session_id}_{turn_number}",
+                )
+        except Exception:
+            pass
+
     except asyncio.CancelledError:
         # Barge-in or session end — clean exit
         tracker.mark("interruption_complete")
