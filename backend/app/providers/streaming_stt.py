@@ -58,11 +58,14 @@ class DeepgramStreamingSTT:
         self.on_partial = on_partial
         self._ws = None
         self._receive_task = None
+        self._keepalive_task = None
         self._connected = False
+        self._reconnecting = False
         self._final_transcript = ""
         self._partial_transcript = ""
         self._utterance_start = None
         self._connect_time = None
+        self._last_audio_time = time.monotonic()
 
     async def connect(self) -> bool:
         """Connect to Deepgram streaming API. Returns True on success."""
@@ -97,6 +100,10 @@ class DeepgramStreamingSTT:
                 self._receive_loop(),
                 name=f"dg_recv_{self.session_id}",
             )
+            self._keepalive_task = asyncio.create_task(
+                self._keepalive_loop(),
+                name=f"dg_keepalive_{self.session_id}",
+            )
             log.info("streaming_stt.connected", session_id=self.session_id)
             return True
 
@@ -109,15 +116,78 @@ class DeepgramStreamingSTT:
     async def send_audio(self, audio_bytes: bytes) -> None:
         """Send audio chunk to Deepgram. Called for each browser audio frame."""
         if not self._connected or not self._ws:
+            # Attempt auto-reconnect if disconnected
+            if not self._reconnecting:
+                asyncio.create_task(self._auto_reconnect())
             return
         try:
             await self._ws.send(audio_bytes)
+            self._last_audio_time = time.monotonic()
             if self._utterance_start is None:
                 self._utterance_start = time.monotonic()
         except Exception as exc:
             log.warning("streaming_stt.send_failed",
                         session_id=self.session_id, error=str(exc))
             self._connected = False
+            # Trigger reconnect
+            if not self._reconnecting:
+                asyncio.create_task(self._auto_reconnect())
+
+    async def _auto_reconnect(self) -> None:
+        """Attempt to reconnect Deepgram WebSocket after disconnect."""
+        if self._reconnecting:
+            return
+        self._reconnecting = True
+        log.info("streaming_stt.reconnecting", session_id=self.session_id)
+
+        # Clean up old tasks
+        for task in [self._receive_task, self._keepalive_task]:
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+        if self._ws:
+            try:
+                await self._ws.close()
+            except Exception:
+                pass
+
+        # Retry connect up to 2 times
+        for attempt in range(1, 3):
+            try:
+                success = await self.connect()
+                if success:
+                    log.info("streaming_stt.reconnected",
+                             session_id=self.session_id, attempt=attempt)
+                    self._reconnecting = False
+                    return
+            except Exception as exc:
+                log.warning("streaming_stt.reconnect_failed",
+                            session_id=self.session_id, attempt=attempt, error=str(exc))
+            await asyncio.sleep(0.5)
+
+        log.error("streaming_stt.reconnect_exhausted", session_id=self.session_id)
+        self._reconnecting = False
+
+    async def _keepalive_loop(self) -> None:
+        """Send KeepAlive to Deepgram every 8s when no audio is flowing.
+        Prevents Deepgram from closing the WebSocket during AI speech."""
+        try:
+            while self._connected and self._ws:
+                await asyncio.sleep(8)
+                if not self._connected or not self._ws:
+                    break
+                # Only send keepalive if no audio was sent recently (10s)
+                since_last = time.monotonic() - self._last_audio_time
+                if since_last > 5:
+                    try:
+                        await self._ws.send(json.dumps({"type": "KeepAlive"}))
+                    except Exception:
+                        break
+        except asyncio.CancelledError:
+            pass
 
     async def _receive_loop(self) -> None:
         """Receive partial and final transcripts from Deepgram."""
@@ -233,12 +303,13 @@ class DeepgramStreamingSTT:
     async def close(self) -> None:
         """Clean shutdown — close Deepgram WebSocket."""
         self._connected = False
-        if self._receive_task and not self._receive_task.done():
-            self._receive_task.cancel()
-            try:
-                await self._receive_task
-            except (asyncio.CancelledError, Exception):
-                pass
+        for task in [self._receive_task, self._keepalive_task]:
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
         if self._ws:
             try:
                 await self._ws.close()
