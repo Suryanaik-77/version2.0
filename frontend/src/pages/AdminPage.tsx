@@ -641,6 +641,7 @@ function VoiceConfigTab() {
   const [enabled, setEnabled] = useState(true)
   const [provider, setProvider] = useState('inworld')
   const [voice, setVoice] = useState('')
+  const [sttProvider, setSttProvider] = useState('openai')
   const [testText, setTestText] = useState("Hi Rahul, welcome to the interview. I'm going to ask you about clock tree synthesis today. Let's start simple — what is clock skew and why does it matter?")
   const [testStatus, setTestStatus] = useState('')
 
@@ -649,11 +650,12 @@ function VoiceConfigTab() {
       setEnabled(data.tts_enabled !== false)
       setProvider(data.tts_provider || 'inworld')
       setVoice(data.tts_voice || '')
+      setSttProvider(data.stt_provider || 'openai')
     }
   }, [data])
 
   const save = useMutation({
-    mutationFn: () => adminApi.setVoiceConfig({ tts_enabled: enabled, tts_provider: provider, tts_voice: voice }),
+    mutationFn: () => adminApi.setVoiceConfig({ tts_enabled: enabled, tts_provider: provider, tts_voice: voice, stt_provider: sttProvider }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['admin-voice-config'] }); toast.success('Voice config saved') },
     onError: () => toast.error('Failed to save'),
   })
@@ -726,9 +728,31 @@ function VoiceConfigTab() {
           </div>
         </Card>
 
-        {/* Provider */}
+        {/* STT Provider */}
         <Card style={{ padding: 16, marginBottom: 12 }}>
-          <MonoLabel style={{ display: 'block', marginBottom: 8 }}>Provider</MonoLabel>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <div style={{ width: 24, height: 24, borderRadius: 6, background: 'rgba(59,130,246,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <span style={{ fontSize: 12 }}>🎤</span>
+            </div>
+            <div>
+              <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-0)' }}>Speech-to-Text</p>
+              <p style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 1 }}>STT provider for transcription</p>
+            </div>
+          </div>
+          <select value={sttProvider} onChange={e => setSttProvider(e.target.value)} style={selectStyle}>
+            <option value="openai">OpenAI Whisper (900-1400ms, highest accuracy)</option>
+            <option value="deepgram">Deepgram Nova-2 (300-600ms, fast)</option>
+          </select>
+          {sttProvider === 'deepgram' && (
+            <p style={{ fontSize: 10, color: 'var(--green, #22c55e)', marginTop: 6 }}>
+              Deepgram REST batch — 2-3x faster than OpenAI
+            </p>
+          )}
+        </Card>
+
+        {/* TTS Provider */}
+        <Card style={{ padding: 16, marginBottom: 12 }}>
+          <MonoLabel style={{ display: 'block', marginBottom: 8 }}>TTS Provider</MonoLabel>
           <select value={provider} onChange={e => { setProvider(e.target.value); setVoice('') }} style={selectStyle}>
             {VOICE_PROVIDERS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
           </select>
