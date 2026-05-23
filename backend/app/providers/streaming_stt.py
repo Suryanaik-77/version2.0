@@ -76,12 +76,9 @@ class DeepgramStreamingSTT:
             "?model=nova-2"
             "&language=en"
             "&smart_format=true"
-            "&endpointing=400"      # 400ms silence = utterance end
-            "&interim_results=true"  # get partial transcripts
-            "&vad_events=true"       # get speech start/end events
-            "&encoding=linear16"
-            "&sample_rate=16000"
-            "&channels=1"
+            "&endpointing=400"
+            "&interim_results=true"
+            "&vad_events=true"
         )
 
         try:
