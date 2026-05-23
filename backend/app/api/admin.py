@@ -660,6 +660,7 @@ async def get_voice_config(_: AdminUser) -> dict:
         "tts_enabled": rc.get("tts_enabled"),
         "tts_provider": rc.get("tts_provider"),
         "tts_voice": rc.get("tts_voice"),
+        "stt_provider": rc.get("stt_provider"),
     }
 
 
@@ -667,6 +668,7 @@ class VoiceConfigUpdate(BaseModel):
     tts_enabled: bool | None = None
     tts_provider: str | None = None
     tts_voice: str | None = None
+    stt_provider: str | None = None  # "openai" (batch) or "deepgram" (streaming)
 
 
 @router.post("/voice-config")
@@ -678,6 +680,8 @@ async def set_voice_config(body: VoiceConfigUpdate, _: AdminUser) -> dict:
         updates["tts_provider"] = body.tts_provider
     if body.tts_voice is not None:
         updates["tts_voice"] = body.tts_voice
+    if body.stt_provider is not None:
+        updates["stt_provider"] = body.stt_provider
     if updates:
         await rc.set_many(updates)
         log.info("admin.voice_config_updated", **updates)
@@ -777,3 +781,50 @@ async def prompt_playground(body: PlaygroundRequest, _: AdminUser) -> dict:
             "model": model_id,
             "latency_ms": latency_ms,
         }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Anti-Cheat Configuration
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Default anti-cheat features
+_ANTICHEAT_DEFAULTS = {
+    "tab_switch_detection": True,
+    "clipboard_monitoring": True,
+    "devtools_detection": True,
+    "split_screen_detection": True,
+    "ai_extension_detection": True,
+    "dom_overlay_detection": True,
+    "window_blur_tracking": True,
+    "behavioral_analysis": True,
+    "pause_consistency_check": True,
+    "answer_sophistication_check": True,
+}
+
+
+@router.get("/anticheat-config")
+async def get_anticheat_config(_: AdminUser) -> dict:
+    """Get current anti-cheat feature toggles."""
+    stored = rc.get("anticheat_config")
+    if stored and isinstance(stored, dict):
+        config = {**_ANTICHEAT_DEFAULTS, **stored}
+    else:
+        config = dict(_ANTICHEAT_DEFAULTS)
+    return {"features": config}
+
+
+class AnticheatConfigUpdate(BaseModel):
+    features: dict
+
+
+@router.post("/anticheat-config")
+async def set_anticheat_config(body: AnticheatConfigUpdate, _: AdminUser) -> dict:
+    """Update anti-cheat feature toggles."""
+    # Merge with defaults to ensure all keys exist
+    current = rc.get("anticheat_config")
+    if not isinstance(current, dict):
+        current = dict(_ANTICHEAT_DEFAULTS)
+    current.update(body.features)
+    await rc.set_key("anticheat_config", current)
+    log.info("admin.anticheat_config_updated", features=current)
+    return {"status": "success", "features": current}

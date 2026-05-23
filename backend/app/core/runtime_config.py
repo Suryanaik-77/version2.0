@@ -23,6 +23,8 @@ _DEFAULTS: dict[str, Any] = {
     "tts_enabled": True,
     "tts_provider": "inworld",
     "tts_voice": "",
+    # STT Config (feature flag: "openai" = current batch, "deepgram" = streaming)
+    "stt_provider": "openai",
 }
 
 # In-memory cache (fast reads, synced from Redis)

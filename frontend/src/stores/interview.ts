@@ -202,7 +202,18 @@ function _beginRecording(): void {
   }
 
   _recorder.ondataavailable = (e) => {
-    if (e.data.size > 0) _chunks.push(e.data)
+    if (e.data.size > 0) {
+      _chunks.push(e.data)
+      // Stream each chunk to backend as binary frame (for streaming STT)
+      // Backend routes to Deepgram if streaming enabled, ignores otherwise
+      if (_ws && _ws.readyState === WebSocket.OPEN) {
+        e.data.arrayBuffer().then(buf => {
+          if (_ws && _ws.readyState === WebSocket.OPEN) {
+            _ws.send(buf)
+          }
+        })
+      }
+    }
   }
 
   _recorder.onstop = () => {

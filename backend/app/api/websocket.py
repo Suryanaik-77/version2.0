@@ -261,6 +261,60 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
         # Record reconnect for observability
         record_event("ws.reconnected", session_id=session_id)
 
+    # ── Streaming STT setup (feature flag) ──────────────────────────────────────
+    from app.core.runtime_config import get as rc_get
+    _use_streaming_stt = rc_get("stt_provider", "openai") == "deepgram" and settings.DEEPGRAM_API_KEY
+    _streaming_stt_instance = None
+
+    if _use_streaming_stt:
+        from app.providers.streaming_stt import get_or_create_streaming_stt
+
+        async def _on_utterance_complete(transcript: str, stt_ms: int):
+            """Callback from Deepgram when utterance ends — triggers pipeline."""
+            # Apply domain correction
+            corrected = _correct_transcript(transcript)
+            if corrected != transcript:
+                log.info("stt.corrected", session_id=session_id,
+                         raw=transcript[:80], corrected=corrected[:80])
+                transcript = corrected
+
+            turn_num = _turn_counters.get(session_id, 0) + 1
+            _turn_counters[session_id] = turn_num
+
+            # Emit STT event to frontend
+            stt_event = stt_final_event(session_id, transcript, stt_ms, turn_num)
+            await hub.publish_to_session(session_id, stt_event.to_json())
+
+            # Launch pipeline
+            from app.voice.pipeline import run_turn_pipeline
+            pipeline_task = asyncio.create_task(
+                run_turn_pipeline(
+                    session_id=session_id,
+                    transcript=transcript,
+                    turn_number=turn_num,
+                    ws_hub=hub,
+                ),
+                name=f"pipeline_{session_id}_{turn_num}",
+            )
+            hub.register_stream(session_id, pipeline_task)
+
+        async def _on_partial(partial: str):
+            """Callback for partial transcripts — show in frontend."""
+            from app.models.events import stt_partial_event
+            event = stt_partial_event(session_id, partial)
+            await hub.relay_to_session(session_id, event.to_json())
+
+        _streaming_stt_instance = await get_or_create_streaming_stt(
+            session_id=session_id,
+            on_utterance_complete=_on_utterance_complete,
+            on_partial=_on_partial,
+        )
+        if _streaming_stt_instance:
+            log.info("ws.streaming_stt_enabled", session_id=session_id)
+        else:
+            log.warning("ws.streaming_stt_fallback_to_batch", session_id=session_id)
+            _use_streaming_stt = False
+
     # ── Launch concurrent tasks ───────────────────────────────────────────────
     receive_task  = asyncio.create_task(_receive_loop(session_id, connection_id, websocket, is_admin))
     sub_task      = asyncio.create_task(_redis_sub_loop(session_id, connection_id))
@@ -284,6 +338,10 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
             if exc and not isinstance(exc, (WebSocketDisconnect, asyncio.CancelledError)):
                 log.error("ws.task_error", session_id=session_id, error=str(exc))
     finally:
+        # Close streaming STT if active
+        if _streaming_stt_instance:
+            from app.providers.streaming_stt import close_streaming_stt
+            await close_streaming_stt(session_id)
         await hub.disconnect(session_id, connection_id)
         log.info("ws.endpoint_exited", session_id=session_id, connection_id=connection_id)
 
@@ -359,13 +417,20 @@ async def _receive_loop(
             
             if "bytes" in message and message["bytes"]:
                 audio_bytes = message["bytes"]
-                # Check if this is a binary audio blob (preceded by AUDIO_META)
+
+                # Route 1: Streaming STT — send chunk directly to Deepgram
+                from app.providers.streaming_stt import _active_stt
+                streaming_stt = _active_stt.get(session_id)
+                if streaming_stt and streaming_stt.is_connected:
+                    asyncio.create_task(streaming_stt.send_audio(audio_bytes))
+                    continue
+
+                # Route 2: Binary blob transport (preceded by AUDIO_META)
                 meta = _pending_audio_meta.pop(session_id, None)
                 if meta:
-                    # New binary transport — audio blob without base64
                     asyncio.create_task(
                         _handle_audio_blob(session_id, {
-                            "audio_bytes": audio_bytes,  # raw bytes, no base64
+                            "audio_bytes": audio_bytes,
                             "format": meta.get("format", "webm"),
                             "duration_ms": meta.get("duration_ms", 0),
                             "_binary": True,
@@ -373,7 +438,7 @@ async def _receive_loop(
                         name=f"audio_blob_{session_id}",
                     )
                 else:
-                    # PCM audio chunk from server-side VAD (Phase 3)
+                    # Route 3: PCM audio chunk from server-side VAD
                     asyncio.create_task(
                         _handle_audio_chunk(session_id, audio_bytes),
                         name=f"audio_{session_id}",
