@@ -15,7 +15,8 @@ Runtime guarantees:
   - Streaming never buffers the full response.
 """
 from __future__ import annotations
-
+from dotenv import load_dotenv
+load_dotenv()
 import asyncio
 import time
 from typing import AsyncIterator
