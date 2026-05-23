@@ -23,11 +23,16 @@ def transcribe_file(file_path: str) -> dict:
     print("\n[1] Uploading file...")
     t0 = time.time()
 
+    filename = file_path.split("/")[-1]
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "mp3"
+    mime_types = {"mp3": "audio/mpeg", "wav": "audio/wav", "webm": "audio/webm", "ogg": "audio/ogg", "flac": "audio/flac"}
+    mime = mime_types.get(ext, "audio/mpeg")
+
     with open(file_path, "rb") as f:
         upload_resp = requests.post(
             "https://api.gladia.io/v2/upload",
             headers={"x-gladia-key": GLADIA_API_KEY},
-            files={"audio": (file_path.split("/")[-1], f)},
+            files={"audio": (filename, f, mime)},
         )
 
     if upload_resp.status_code != 200:
