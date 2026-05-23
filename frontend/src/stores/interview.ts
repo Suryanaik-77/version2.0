@@ -204,34 +204,35 @@ function _beginRecording(): void {
   _recorder.ondataavailable = (e) => {
     if (e.data.size > 0) {
       _chunks.push(e.data)
-      // Stream each chunk to backend as binary frame (for streaming STT)
-      // Backend routes to Deepgram if streaming enabled, ignores otherwise
-      if (_ws && _ws.readyState === WebSocket.OPEN) {
-        e.data.arrayBuffer().then(buf => {
-          if (_ws && _ws.readyState === WebSocket.OPEN) {
-            _ws.send(buf)
-          }
-        })
-      }
     }
   }
 
   _recorder.onstop = () => {
-  if (_chunks.length === 0 || !_speechDetected || !_recording) {
+    if (_chunks.length === 0 || !_speechDetected || !_recording) {
+      _chunks = []
+      return
+    }
+    const blob = new Blob(_chunks, { type: 'audio/webm' })
     _chunks = []
-    return
+    const dur = Date.now() - _recStart
+
+    useInterview.setState({ audioState: 'thinking' })
+
+    if (_ws && _ws.readyState === WebSocket.OPEN) {
+      // Send metadata + binary blob (no base64 encoding)
+      _ws.send(JSON.stringify({
+        type: 'AUDIO_META',
+        format: 'webm',
+        duration_ms: dur,
+      }))
+      blob.arrayBuffer().then(buf => {
+        if (_ws && _ws.readyState === WebSocket.OPEN) {
+          _ws.send(buf)
+        }
+      })
+    }
+    if (_recording) setTimeout(_beginRecording, 50)
   }
-
-  _chunks = []
-
-  useInterview.setState({ audioState: 'thinking' })
-
-  // Deepgram already received streaming chunks live.
-
-  if (_recording) {
-    setTimeout(_beginRecording, 50)
-  }
-}
 
   _recorder.start(100)  // 100ms chunks — reduces hidden buffer delay at stop time
 

@@ -24,6 +24,8 @@ _DEFAULTS: dict[str, Any] = {
     "tts_provider": "inworld",
     "tts_voice": "",
     # STT Config (feature flag: "openai" = current batch, "deepgram" = streaming)
+    # NOTE: deepgram streaming requires PCM audio (AudioWorklet). WebM chunks don't work.
+    # Keep "openai" as default until PCM streaming is implemented.
     "stt_provider": "openai",
 }
 

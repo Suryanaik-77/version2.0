@@ -261,9 +261,13 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
         # Record reconnect for observability
         record_event("ws.reconnected", session_id=session_id)
 
-    # ── Streaming STT setup (feature flag) ──────────────────────────────────────
+    # ── Streaming STT setup ────────────────────────────────────────────────────
+    # NOTE: Deepgram WebSocket streaming requires PCM audio (AudioWorklet).
+    # Browser sends WebM/Opus chunks which Deepgram WS can't parse incrementally.
+    # For now: stt_provider=deepgram uses Deepgram REST batch (faster than OpenAI).
+    # Streaming STT via WebSocket is disabled until PCM streaming is implemented.
     from app.core.runtime_config import get as rc_get
-    _use_streaming_stt = rc_get("stt_provider", "openai") == "deepgram" and settings.DEEPGRAM_API_KEY
+    _use_streaming_stt = False  # Disabled — WebM chunks incompatible with Deepgram WS
     _streaming_stt_instance = None
 
     if _use_streaming_stt:
@@ -794,17 +798,57 @@ def _get_stt_client():
 
 
 async def _transcribe_blob(stt, audio_bytes: bytes, fmt: str, session_id: str) -> str:
-    """Transcribe audio blob using AsyncOpenAI directly. No temp file, no executor."""
+    """Transcribe audio blob. Routes to Deepgram REST or OpenAI based on config."""
     import time
     import io
 
     if len(audio_bytes) < 1000:
         return ""
 
+    from app.core.runtime_config import get as rc_get
+    provider = rc_get("stt_provider", "openai")
+
     t0 = time.monotonic()
+
+    # Deepgram REST API (faster: 300-600ms vs OpenAI 900-1400ms)
+    if provider == "deepgram" and settings.DEEPGRAM_API_KEY:
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(
+                    "https://api.deepgram.com/v1/listen"
+                    "?model=nova-2&language=en&smart_format=true",
+                    headers={
+                        "Authorization": f"Token {settings.DEEPGRAM_API_KEY}",
+                        "Content-Type": f"audio/{fmt}",
+                    },
+                    content=audio_bytes,
+                )
+                response.raise_for_status()
+                data = response.json()
+                transcript = (
+                    data.get("results", {})
+                    .get("channels", [{}])[0]
+                    .get("alternatives", [{}])[0]
+                    .get("transcript", "")
+                    .strip()
+                )
+            elapsed = int((time.monotonic() - t0) * 1000)
+            log.info("stt.deepgram_done", session_id=session_id,
+                     chars=len(transcript), latency_ms=elapsed)
+            from app.observability.call_tracker import track_stt_call
+            track_stt_call(session_id=session_id, latency_ms=elapsed,
+                           status="success" if transcript else "empty")
+            return transcript
+        except Exception as exc:
+            elapsed = int((time.monotonic() - t0) * 1000)
+            log.warning("stt.deepgram_error", session_id=session_id,
+                        error=str(exc), latency_ms=elapsed)
+            # Fall through to OpenAI
+
+    # OpenAI (default fallback)
     try:
         client = _get_stt_client()
-        # Pass bytes directly as a file-like object with name hint
         audio_file = io.BytesIO(audio_bytes)
         audio_file.name = f"audio.{fmt}"
 
@@ -818,11 +862,13 @@ async def _transcribe_blob(stt, audio_bytes: bytes, fmt: str, session_id: str) -
         )
         transcript = response.text.strip() if hasattr(response, "text") else str(response).strip()
         elapsed = int((time.monotonic() - t0) * 1000)
-        log.info("stt.blob_done", session_id=session_id, chars=len(transcript), latency_ms=elapsed)
+        log.info("stt.openai_done", session_id=session_id,
+                 chars=len(transcript), latency_ms=elapsed)
         return transcript
     except Exception as exc:
         elapsed = int((time.monotonic() - t0) * 1000)
-        log.error("stt.blob_error", session_id=session_id, error=str(exc), latency_ms=elapsed)
+        log.error("stt.blob_error", session_id=session_id,
+                  error=str(exc), latency_ms=elapsed)
         return ""
 
 
