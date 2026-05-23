@@ -158,6 +158,9 @@ export const adminApi = {
   testTts:        (d: object)    => api.post('/admin/test-tts', d),
   // Prompt Playground
   playground:     (d: object)    => api.post('/admin/playground', d),
+  // Anti-Cheat Config
+  anticheatConfig:    ()              => api.get('/admin/anticheat-config'),
+  setAnticheatConfig: (d: object)    => api.post('/admin/anticheat-config', d),
 }
 
 export const reviewerApi = {
