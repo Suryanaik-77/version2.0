@@ -740,12 +740,18 @@ function VoiceConfigTab() {
             </div>
           </div>
           <select value={sttProvider} onChange={e => setSttProvider(e.target.value)} style={selectStyle}>
-            <option value="openai">OpenAI Whisper (900-1400ms, highest accuracy)</option>
-            <option value="deepgram">Deepgram Nova-2 (300-600ms, fast)</option>
+            <option value="openai">OpenAI gpt-4o-mini-transcribe (fast, cheaper)</option>
+            <option value="openai-4o">OpenAI gpt-4o-transcribe (highest accuracy)</option>
+            <option value="deepgram">Deepgram Nova-2 (300-600ms, fastest)</option>
           </select>
           {sttProvider === 'deepgram' && (
             <p style={{ fontSize: 10, color: 'var(--green, #22c55e)', marginTop: 6 }}>
-              Deepgram REST batch — 2-3x faster than OpenAI
+              Deepgram REST — fastest STT option
+            </p>
+          )}
+          {sttProvider === 'openai-4o' && (
+            <p style={{ fontSize: 10, color: 'var(--accent-dim)', marginTop: 6 }}>
+              gpt-4o-transcribe — best accuracy, higher cost
             </p>
           )}
         </Card>

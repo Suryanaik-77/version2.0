@@ -846,7 +846,9 @@ async def _transcribe_blob(stt, audio_bytes: bytes, fmt: str, session_id: str) -
                         error=str(exc), latency_ms=elapsed)
             # Fall through to OpenAI
 
-    # OpenAI (default fallback)
+    # OpenAI (default + fallback)
+    # "openai" = gpt-4o-mini-transcribe, "openai-4o" = gpt-4o-transcribe
+    stt_model = "gpt-4o-transcribe" if provider == "openai-4o" else "gpt-4o-mini-transcribe"
     try:
         client = _get_stt_client()
         audio_file = io.BytesIO(audio_bytes)
@@ -854,7 +856,7 @@ async def _transcribe_blob(stt, audio_bytes: bytes, fmt: str, session_id: str) -
 
         response = await asyncio.wait_for(
             client.audio.transcriptions.create(
-                model="gpt-4o-mini-transcribe",
+                model=stt_model,
                 file=audio_file,
                 language="en",
             ),
@@ -862,7 +864,7 @@ async def _transcribe_blob(stt, audio_bytes: bytes, fmt: str, session_id: str) -
         )
         transcript = response.text.strip() if hasattr(response, "text") else str(response).strip()
         elapsed = int((time.monotonic() - t0) * 1000)
-        log.info("stt.openai_done", session_id=session_id,
+        log.info("stt.openai_done", session_id=session_id, model=stt_model,
                  chars=len(transcript), latency_ms=elapsed)
         return transcript
     except Exception as exc:
