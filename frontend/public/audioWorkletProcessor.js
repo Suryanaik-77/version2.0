@@ -76,8 +76,8 @@ class PCMProcessor extends AudioWorkletProcessor {
         pcm16[i] = s < 0 ? s * 32768 : s * 32767
       }
 
-      // Post raw PCM bytes to main thread
-      this.port.postMessage(pcm16.buffer, [pcm16.buffer])
+      // Post PCM frame to main thread (typed message for receiver check)
+      this.port.postMessage({ type: 'pcm', buffer: pcm16.buffer }, [pcm16.buffer])
     }
 
     return true
