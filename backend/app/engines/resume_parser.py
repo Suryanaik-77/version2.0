@@ -241,19 +241,29 @@ def _extract_pdf_pdfplumber(file_bytes: bytes) -> str:
 
 
 def _extract_pdf_textract(file_bytes: bytes) -> str:
-    """Amazon Textract — handles scanned/image-based PDFs via AWS OCR."""
+    """Amazon Textract — handles scanned/image-based PDFs via AWS OCR.
+    Renders each page to PNG via PyMuPDF, then sends to Textract per page."""
+    import fitz
     import boto3, os
+
     client = boto3.client(
         "textract",
         region_name=os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
     )
-    resp = client.detect_document_text(Document={"Bytes": file_bytes})
-    lines = [
-        block["Text"]
-        for block in resp.get("Blocks", [])
-        if block["BlockType"] == "LINE"
-    ]
-    return "\n".join(lines).strip()
+    doc = fitz.open(stream=file_bytes, filetype="pdf")
+    all_text = []
+    for page in doc:
+        pix = page.get_pixmap(dpi=200)
+        img_bytes = pix.tobytes("png")
+        resp = client.detect_document_text(Document={"Bytes": img_bytes})
+        lines = [
+            block["Text"]
+            for block in resp.get("Blocks", [])
+            if block["BlockType"] == "LINE"
+        ]
+        all_text.extend(lines)
+    doc.close()
+    return "\n".join(all_text).strip()
 
 
 def _extract_pdf(file_bytes: bytes) -> str:
