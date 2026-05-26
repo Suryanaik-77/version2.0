@@ -208,36 +208,68 @@ async def parse_resume(resume_text: str, domain: str = "physical_design") -> dic
 
 # ── PDF / DOCX text extraction ──────────────────────────────────────────────
 
+def _extract_pdf_pymupdf(file_bytes: bytes) -> str:
+    """PyMuPDF (fitz) — strongest extractor. Handles embedded fonts, complex layouts."""
+    import fitz
+    doc = fitz.open(stream=file_bytes, filetype="pdf")
+    text = ""
+    for page in doc:
+        text += page.get_text() + "\n"
+    doc.close()
+    return text.strip()
+
+
+def _extract_pdf_pypdf(file_bytes: bytes) -> str:
+    """PyPDF — good fallback, handles most standard PDFs."""
+    import io
+    from pypdf import PdfReader
+    reader = PdfReader(io.BytesIO(file_bytes))
+    text = ""
+    for page in reader.pages:
+        text += (page.extract_text() or "") + "\n"
+    return text.strip()
+
+
+def _extract_pdf_pdfplumber(file_bytes: bytes) -> str:
+    """pdfplumber — last resort, good with tables."""
+    import io
+    import pdfplumber
+    text = ""
+    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+        for page in pdf.pages:
+            text += (page.extract_text() or "") + "\n"
+    return text.strip()
+
+
+def _extract_pdf(file_bytes: bytes) -> str:
+    """Chain: PyMuPDF → PyPDF → pdfplumber. Returns first non-empty result."""
+    extractors = [
+        ("pymupdf", _extract_pdf_pymupdf),
+        ("pypdf", _extract_pdf_pypdf),
+        ("pdfplumber", _extract_pdf_pdfplumber),
+    ]
+    for name, fn in extractors:
+        try:
+            text = fn(file_bytes)
+            if text and len(text.strip()) > 20:
+                log.info("resume.pdf_extracted", method=name, chars=len(text))
+                return text
+        except Exception as e:
+            log.debug("resume.pdf_extractor_failed", method=name, error=str(e))
+    log.warning("resume.pdf_all_extractors_failed")
+    return ""
+
+
 async def extract_file_text(file_bytes: bytes, filename: str) -> str:
     """Extract text from uploaded file. Supports PDF, DOCX, TXT."""
-    import tempfile
-    import os
-
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "txt"
 
     if ext == "pdf":
-        tmp_path = None
-        try:
-            import pdfplumber
-            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-                tmp.write(file_bytes)
-                tmp_path = tmp.name
-            text = ""
-            with pdfplumber.open(tmp_path) as pdf:
-                for page in pdf.pages:
-                    text += (page.extract_text() or "") + "\n"
-            return text.strip()
-        except Exception as e:
-            log.warning("resume.pdf_extract_failed", error=str(e))
-            return ""
-        finally:
-            if tmp_path:
-                try:
-                    os.unlink(tmp_path)
-                except Exception:
-                    pass
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, _extract_pdf, file_bytes)
 
     elif ext in ("docx", "doc"):
+        import tempfile, os
         tmp_path = None
         try:
             import docx2txt
