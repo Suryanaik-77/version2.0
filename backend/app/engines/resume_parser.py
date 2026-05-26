@@ -100,9 +100,13 @@ def _call_haiku(prompt: str) -> str:
         "system": [{"type": "text", "text": "You are a resume parser. Return only valid JSON."}],
         "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
     })
-    resp = client.invoke_model(modelId=HAIKU_MODEL_ID, body=body)
-    result = json.loads(resp["body"].read())
-    return result["content"][0]["text"].strip()
+    try:
+        resp = client.invoke_model(modelId=HAIKU_MODEL_ID, body=body)
+        result = json.loads(resp["body"].read())
+        return result["content"][0]["text"].strip()
+    except Exception as exc:
+        log.error("resume.haiku_error", error=str(exc), model=HAIKU_MODEL_ID)
+        raise
 
 
 def _call_openai(prompt: str) -> str:
@@ -125,9 +129,11 @@ def _call_openai(prompt: str) -> str:
 def _call_llm_sync(prompt: str) -> str:
     """Try Haiku 4.5 first (fast, accurate), fall back to OpenAI."""
     try:
-        return _call_haiku(prompt)
+        result = _call_haiku(prompt)
+        log.info("resume.haiku_success", chars=len(result))
+        return result
     except Exception as e:
-        log.info("resume.haiku_fallback", error=str(e))
+        log.warning("resume.haiku_fallback", error=str(e))
     return _call_openai(prompt)
 
 
