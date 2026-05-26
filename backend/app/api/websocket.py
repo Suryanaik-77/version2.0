@@ -256,6 +256,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
             turn_num = _turn_counters.get(session_id, 0) + 1
             _turn_counters[session_id] = turn_num
 
+            log.info("stt.streaming_complete", session_id=session_id,
+                     stt_ms=stt_ms, chars=len(transcript), turn=turn_num)
+
             stt_event = stt_final_event(session_id, transcript, stt_ms, turn_num)
             await hub.publish_to_session(session_id, stt_event.to_json())
 

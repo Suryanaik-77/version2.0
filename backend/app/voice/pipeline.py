@@ -209,6 +209,18 @@ async def run_turn_pipeline(
             error_event(session_id, "PIPELINE_ERROR", "Voice pipeline error").to_json(),
         )
     finally:
+        tracker.mark("turn_complete")
+        log.info(
+            "turn.latency",
+            session_id=session_id,
+            turn=turn_number,
+            stt_ms=tracker.elapsed_ms("stt_complete"),
+            first_token_ms=tracker.elapsed_ms("first_token"),
+            first_sentence_ms=tracker.elapsed_ms("first_sentence"),
+            first_audio_ms=tracker.elapsed_ms("first_audio_sent"),
+            total_ms=tracker.elapsed_ms("turn_complete"),
+            tts_chunks=tracker.tts_chunk_count,
+        )
         await tracker.emit()
 
 
