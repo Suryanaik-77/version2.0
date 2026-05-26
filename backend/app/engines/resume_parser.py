@@ -255,7 +255,7 @@ def _extract_pdf(file_bytes: bytes) -> str:
                 log.info("resume.pdf_extracted", method=name, chars=len(text))
                 return text
         except Exception as e:
-            log.debug("resume.pdf_extractor_failed", method=name, error=str(e))
+            log.warning("resume.pdf_extractor_failed", method=name, error=str(e))
     log.warning("resume.pdf_all_extractors_failed")
     return ""
 
