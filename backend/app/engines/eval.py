@@ -9,6 +9,12 @@ Execution contract (mandatory):
 
 Timeout: 8000ms hard cap. Eval failure is non-fatal.
 If eval fails: strategy_engine uses inline signals only for next turn.
+
+Bug fix (v2):
+  _parse_eval_json previously returned the full LLM JSON dict, which could
+  include extra string-valued keys (e.g. "overall": "good", "comment": "...").
+  sum(scores.values()) then raised TypeError: unsupported operand type(s)
+  for +: 'int' and 'str'. Fix: return ONLY the 7 expected numeric keys.
 """
 from __future__ import annotations
 
@@ -37,8 +43,13 @@ from app.observability.call_tracker import track_llm_call
 log = structlog.get_logger(__name__)
 settings = get_settings()
 
-# ── Eval result stored in Redis ────────────────────────────────────────────────
-_EVAL_KEY_TTL = 300  # 5 minutes — long enough for strategy + memory to consume it
+_EVAL_KEY_TTL = 300  # 5 minutes
+
+# The 7 scoring dimensions. Only these keys are valid numeric scores.
+_SCORE_KEYS = frozenset({
+    "accuracy", "depth", "completeness", "clarity",
+    "maturity", "ownership", "correctness",
+})
 
 
 async def run_async_eval(
@@ -53,21 +64,19 @@ async def run_async_eval(
     Full eval pipeline. Called as a background task — never awaited in hot path.
 
     Flow:
-      1. LLM scoring call (~1500ms)
+      1. LLM scoring call (~1000-1800ms, Bedrock)
       2. Parse scores from JSON
       3. Decide new mode via strategy_engine
-      4. Update interview_engine state in Redis
+      4. Update session state in Redis
       5. Update memory_engine
-      6. Queue Postgres write (stub Phase 5)
-
-    If ANY step fails: log and exit. The session continues on inline signals.
+      6. Queue Postgres write (background)
     """
     t_start = time.monotonic()
 
     try:
         # Step 1: LLM scoring
         prompt = build_eval_prompt(domain, last_question, transcript)
-        raw = await asyncio.wait_for(
+        raw    = await asyncio.wait_for(
             generate(
                 system=EVAL_SYSTEM,
                 prompt=prompt,
@@ -79,7 +88,6 @@ async def run_async_eval(
             timeout=settings.EVAL_ASYNC_DEADLINE_MS / 1000,
         )
 
-        # Track eval LLM call
         eval_latency = int((time.monotonic() - t_start) * 1000)
         from app.core.runtime_config import get as rc_get
         eval_model = rc_get("eval_model", "") or settings.OPENAI_MODEL
@@ -88,36 +96,37 @@ async def run_async_eval(
             latency_ms=eval_latency, status="success",
         )
 
-        # Step 2: Parse scores
+        # Step 2: Parse scores — returns ONLY the 7 numeric keys (TypeError fixed)
         scores = _parse_eval_json(raw)
         if scores is None:
             log.warning("eval.parse_failed", session_id=session_id, raw=raw[:100])
             return
 
-        flags: list[str] = scores.pop("flags", [])
+        flags: list[str] = []
 
         # Step 2.5: Validate and fix contradictions (~0.1ms, no I/O)
         from app.engines.eval_validator import validate_and_fix
         scores, validation_flags = validate_and_fix(scores, transcript)
         flags.extend(validation_flags)
         if validation_flags:
-            log.info("eval.validated", session_id=session_id, turn=turn_number, fixes=validation_flags)
+            log.info("eval.validated", session_id=session_id,
+                     turn=turn_number, fixes=validation_flags)
 
-        # Step 3: Read current state for strategy decision
+        # Step 3: Read current state
         from app.core.session import get_session
         state = await get_session(session_id)
         if not state or not state.is_active:
             return
 
-        # Step 4: Decide next mode
-        # Read consecutive weak/strong from Redis (stored per session)
+        # Step 4: Compute average — safe because scores only contains int values
+        avg = sum(scores[k] for k in _SCORE_KEYS if k in scores) / len(_SCORE_KEYS)
+
         consecutive_weak, consecutive_strong = await _get_consecutive_counts(session_id)
-        avg = sum(scores.values()) / len(scores) if scores else 5.0
         if avg >= 7.0:
             consecutive_strong = min(consecutive_strong + 1, 5)
-            consecutive_weak = 0
+            consecutive_weak   = 0
         elif avg < 5.0:
-            consecutive_weak = min(consecutive_weak + 1, 5)
+            consecutive_weak   = min(consecutive_weak + 1, 5)
             consecutive_strong = 0
 
         new_mode = strategy.decide_mode_from_eval(
@@ -141,7 +150,7 @@ async def run_async_eval(
                 avg_score=round(avg, 1),
             )
 
-        # Step 5b: Store eval scores for cognition layer (next turn reads these)
+        # Step 5b: Store scores for cognition layer
         rds = r._get_pool()
         await rds.setex(
             f"session:{session_id}:eval:{turn_number}",
@@ -149,24 +158,25 @@ async def run_async_eval(
             json.dumps(scores),
         )
 
-        # Step 6: Update consecutive counts
         await _set_consecutive_counts(session_id, consecutive_weak, consecutive_strong)
 
-        # Step 7: Update memory (async, off critical path)
+        # Step 7: Update memory (background)
         asyncio.create_task(
             mem.update_from_eval(
                 session_id=session_id,
                 transcript=transcript,
                 domain=domain,
                 eval_scores=scores,
-                inline_signals=inline_signals or InlineSignals(session_id=session_id, turn_number=turn_number),
+                inline_signals=inline_signals or InlineSignals(
+                    session_id=session_id, turn_number=turn_number
+                ),
                 turn_number=turn_number,
                 last_question=last_question,
             ),
             name=f"mem_update_{session_id}_{turn_number}",
         )
 
-        # Step 8: Persist eval scores to Postgres (background, non-blocking)
+        # Step 8: Persist to Postgres (background)
         asyncio.create_task(
             _persist_turn_eval(
                 session_id=session_id,
@@ -179,7 +189,6 @@ async def run_async_eval(
             name=f"db_eval_{session_id}_{turn_number}",
         )
 
-        # Observability
         elapsed_ms = int((time.monotonic() - t_start) * 1000)
         record_event(
             "eval.completed",
@@ -214,54 +223,67 @@ async def run_async_eval(
 
     except Exception as exc:
         elapsed_ms = int((time.monotonic() - t_start) * 1000)
-        log.error("eval.unexpected_error", session_id=session_id, error=str(exc), exc_info=exc)
+        log.error("eval.unexpected_error", session_id=session_id,
+                  error=str(exc), exc_info=exc)
         record_event("eval.error", session_id=session_id)
         track_llm_call(session_id=session_id, step="LLM_evaluation", model="unknown",
                         latency_ms=elapsed_ms, status="failure", error=str(exc))
 
 
 def _parse_eval_json(raw: str) -> dict | None:
-    """Parse LLM eval response. Handles minor formatting variations."""
+    """
+    Parse LLM eval response into a dict of {dimension: int_score}.
+
+    Returns ONLY the 7 expected numeric keys — no extra LLM keys survive.
+    This prevents TypeError when summing scores (LLMs sometimes add string keys
+    like "overall": "good" or "comment": "..." alongside numeric scores).
+
+    All scores clamped to [0, 10] and cast to int.
+    Returns None if the response cannot be parsed or is missing expected keys.
+    """
     raw = raw.strip()
 
-    # Strip markdown fences if present (shouldn't be, but LLMs sometimes add them)
+    # Strip markdown fences
     if raw.startswith("```"):
         raw = re.sub(r"```(?:json)?", "", raw).strip()
 
-    # Find JSON object
     match = re.search(r'\{.+\}', raw, re.DOTALL)
     if not match:
         return None
 
     try:
         data = json.loads(match.group())
-        # Validate expected keys
-        expected = {"accuracy", "depth", "completeness", "clarity", "maturity", "ownership", "correctness"}
-        if not expected.issubset(data.keys()):
+
+        # Require all 7 dimensions to be present
+        if not _SCORE_KEYS.issubset(data.keys()):
             return None
-        # Clamp all scores to 0-10
-        for key in expected:
-            data[key] = max(0, min(10, int(data[key])))
-        return data
-    except (json.JSONDecodeError, ValueError, KeyError):
+
+        # Return ONLY the 7 expected keys, each cast to int and clamped
+        # Extra keys (e.g. "overall", "comment", "flags") are intentionally discarded
+        return {
+            k: max(0, min(10, int(data[k])))
+            for k in _SCORE_KEYS
+        }
+
+    except (json.JSONDecodeError, ValueError, TypeError, KeyError):
         return None
 
 
-# ── Consecutive score tracking (tiny Redis keys) ──────────────────────────────
+# ── Consecutive score tracking ────────────────────────────────────────────────
 
 async def _get_consecutive_counts(session_id: str) -> tuple[int, int]:
-    rds = r._get_pool()
+    rds  = r._get_pool()
     pipe = rds.pipeline(transaction=False)
     pipe.get(f"session:{session_id}:consecutive_weak")
     pipe.get(f"session:{session_id}:consecutive_strong")
     results = await pipe.execute()
-    weak   = int(results[0]) if results[0] else 0
-    strong = int(results[1]) if results[1] else 0
+    weak    = int(results[0]) if results[0] else 0
+    strong  = int(results[1]) if results[1] else 0
     return weak, strong
 
 
 async def _set_consecutive_counts(session_id: str, weak: int, strong: int) -> None:
-    rds = r._get_pool()
+    rds  = r._get_pool()
     pipe = rds.pipeline(transaction=False)
     pipe.setex(f"session:{session_id}:consecutive_weak",   settings.SESSION_TTL, weak)
     pipe.setex(f"session:{session_id}:consecutive_strong", settings.SESSION_TTL, strong)
@@ -276,11 +298,7 @@ async def _persist_turn_eval(
     elapsed_ms: int,
     flags: list[str],
 ) -> None:
-    """
-    Background: write eval results to the InterviewTurn row in Postgres.
-    The turn row must already exist (written by websocket handler after transcript).
-    Retries once if the row is not found (turn write may be slightly behind eval).
-    """
+    """Background: write eval results to Postgres InterviewTurn row."""
     try:
         from app.db.persistence import update_turn_eval
         await update_turn_eval(
