@@ -1,8 +1,8 @@
 """
 engines/resume_parser.py — Resume parsing using LLM.
 
-Approach (from monolith):
-  1. Cerebras (fast, free) as primary parser
+Approach:
+  1. Claude Haiku 4.5 (Bedrock) as primary parser — fast, accurate
   2. OpenAI gpt-4o-mini as fallback
   3. Separate parse endpoint — parse first, show preview, THEN create session
 """
@@ -62,24 +62,21 @@ def _safe_json(text: str):
 
 # ── LLM clients (lazy init) ─────────────────────────────────────────────────
 
-_cerebras_client = None
+_bedrock_client = None
 _openai_client = None
 
+HAIKU_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
-def _get_cerebras():
-    global _cerebras_client
-    if _cerebras_client is None:
-        from app.config import get_settings
-        settings = get_settings()
-        key = settings.CEREBRAS_API_KEY
-        if key:
-            from openai import OpenAI
-            _cerebras_client = OpenAI(
-                api_key=key,
-                base_url="https://api.cerebras.ai/v1",
-            )
-            log.info("resume_parser.cerebras_ready")
-    return _cerebras_client
+
+def _get_bedrock():
+    global _bedrock_client
+    if _bedrock_client is None:
+        import boto3, os
+        _bedrock_client = boto3.client(
+            "bedrock-runtime",
+            region_name=os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
+        )
+    return _bedrock_client
 
 
 def _get_openai():
@@ -93,21 +90,19 @@ def _get_openai():
     return _openai_client
 
 
-def _call_cerebras(prompt: str) -> str:
-    """Fast resume parsing via Cerebras. Returns raw LLM response."""
-    client = _get_cerebras()
-    if not client:
-        raise RuntimeError("Cerebras not configured")
-    resp = client.chat.completions.create(
-        model="llama3.1-8b",
-        messages=[
-            {"role": "system", "content": "You are a resume parser. Return only valid JSON."},
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0.1,
-        max_tokens=500,
-    )
-    return resp.choices[0].message.content.strip()
+def _call_haiku(prompt: str) -> str:
+    """Resume parsing via Claude Haiku 4.5 on Bedrock."""
+    client = _get_bedrock()
+    body = json.dumps({
+        "anthropic_version": "bedrock-2023-05-31",
+        "max_tokens": 500,
+        "temperature": 0.1,
+        "system": [{"type": "text", "text": "You are a resume parser. Return only valid JSON."}],
+        "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
+    })
+    resp = client.invoke_model(modelId=HAIKU_MODEL_ID, body=body)
+    result = json.loads(resp["body"].read())
+    return result["content"][0]["text"].strip()
 
 
 def _call_openai(prompt: str) -> str:
@@ -128,11 +123,11 @@ def _call_openai(prompt: str) -> str:
 
 
 def _call_llm_sync(prompt: str) -> str:
-    """Try Cerebras first (fast, free), fall back to OpenAI."""
+    """Try Haiku 4.5 first (fast, accurate), fall back to OpenAI."""
     try:
-        return _call_cerebras(prompt)
+        return _call_haiku(prompt)
     except Exception as e:
-        log.info("resume.cerebras_fallback", error=str(e))
+        log.info("resume.haiku_fallback", error=str(e))
     return _call_openai(prompt)
 
 
@@ -141,7 +136,7 @@ def _call_llm_sync(prompt: str) -> str:
 async def parse_resume(resume_text: str, domain: str = "physical_design") -> dict:
     """
     Parse resume text into structured JSON.
-    Uses Cerebras (fast/free) with OpenAI fallback.
+    Uses Claude Haiku 4.5 (Bedrock) with OpenAI fallback.
     Retries 3 times. Returns fallback dict on total failure.
     """
     if not resume_text or len(resume_text.strip()) < 20:
