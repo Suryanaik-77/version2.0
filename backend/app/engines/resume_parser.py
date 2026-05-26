@@ -240,12 +240,29 @@ def _extract_pdf_pdfplumber(file_bytes: bytes) -> str:
     return text.strip()
 
 
+def _extract_pdf_textract(file_bytes: bytes) -> str:
+    """Amazon Textract — handles scanned/image-based PDFs via AWS OCR."""
+    import boto3, os
+    client = boto3.client(
+        "textract",
+        region_name=os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
+    )
+    resp = client.detect_document_text(Document={"Bytes": file_bytes})
+    lines = [
+        block["Text"]
+        for block in resp.get("Blocks", [])
+        if block["BlockType"] == "LINE"
+    ]
+    return "\n".join(lines).strip()
+
+
 def _extract_pdf(file_bytes: bytes) -> str:
-    """Chain: PyMuPDF → PyPDF → pdfplumber. Returns first non-empty result."""
+    """Chain: PyMuPDF → PyPDF → pdfplumber → Textract. Returns first non-empty result."""
     extractors = [
         ("pymupdf", _extract_pdf_pymupdf),
         ("pypdf", _extract_pdf_pypdf),
         ("pdfplumber", _extract_pdf_pdfplumber),
+        ("textract", _extract_pdf_textract),
     ]
     for name, fn in extractors:
         try:
