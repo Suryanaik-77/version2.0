@@ -129,10 +129,11 @@ def _call_openai(prompt: str) -> str:
 
 def _call_llm_sync(prompt: str) -> str:
     """Try Cerebras first (fast, free), fall back to OpenAI."""
-    try:
-        return _call_cerebras(prompt)
-    except Exception as e:
-        log.info("resume.cerebras_fallback", error=str(e))
+    if _get_cerebras():
+        try:
+            return _call_cerebras(prompt)
+        except Exception as e:
+            log.info("resume.cerebras_fallback", error=str(e))
     return _call_openai(prompt)
 
 
@@ -252,8 +253,10 @@ def _extract_pdf_textract(file_bytes: bytes) -> str:
     )
     doc = fitz.open(stream=file_bytes, filetype="pdf")
     all_text = []
-    for page in doc:
-        pix = page.get_pixmap(dpi=200)
+    for i, page in enumerate(doc):
+        if i >= 3:
+            break  # resumes are 1-3 pages
+        pix = page.get_pixmap(dpi=150)
         img_bytes = pix.tobytes("png")
         resp = client.detect_document_text(Document={"Bytes": img_bytes})
         lines = [
@@ -267,10 +270,8 @@ def _extract_pdf_textract(file_bytes: bytes) -> str:
 
 
 def _extract_pdf(file_bytes: bytes) -> str:
-    """Chain: PyMuPDF → PyPDF → pdfplumber → Textract. Returns first non-empty result."""
+    """Chain: pdfplumber → Textract. Returns first non-empty result."""
     extractors = [
-        ("pymupdf", _extract_pdf_pymupdf),
-        ("pypdf", _extract_pdf_pypdf),
         ("pdfplumber", _extract_pdf_pdfplumber),
         ("textract", _extract_pdf_textract),
     ]
