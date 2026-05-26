@@ -90,12 +90,12 @@ let _isPlaying:         boolean = false
 let _decodeQueue:       ArrayBuffer[] = []
 let _processingQueue:   boolean = false
 
-function getPlayCtx(): AudioContext {
+async function getPlayCtx(): Promise<AudioContext> {
   if (!_playCtx || _playCtx.state === 'closed') {
     _playCtx = new AudioContext()
   }
   if (_playCtx.state === 'suspended') {
-    _playCtx.resume().catch(() => {})
+    await _playCtx.resume()
   }
   return _playCtx
 }
@@ -117,7 +117,7 @@ async function enqueueAudio(data: ArrayBuffer): Promise<void> {
  * Serialised so chunks play in arrival order even if decode speeds differ.
  */
 async function _processDecodeQueue(): Promise<void> {
-  const ctx = getPlayCtx()
+  const ctx = await getPlayCtx()
 
   while (_decodeQueue.length > 0) {
     const chunk = _decodeQueue.shift()!
@@ -206,6 +206,12 @@ async function _initMicStream(ws: WebSocket): Promise<void> {
 
     _micCtx   = new AudioContext()
     const src = _micCtx.createMediaStreamSource(_micStream)
+
+    // Pre-create playback AudioContext while we still have user-activation context
+    // (getUserMedia counts as user gesture — AudioContext won't start suspended)
+    if (!_playCtx || _playCtx.state === 'closed') {
+      _playCtx = new AudioContext()
+    }
 
     // Analyser for visual VAD indicator (not for send triggering)
     _analyser          = _micCtx.createAnalyser()
