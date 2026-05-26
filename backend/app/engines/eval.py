@@ -185,6 +185,8 @@ async def run_async_eval(
                 signals=inline_signals.model_dump() if inline_signals else None,
                 elapsed_ms=int((time.monotonic() - t_start) * 1000),
                 flags=flags,
+                question_text=last_question,
+                answer_text=transcript,
             ),
             name=f"db_eval_{session_id}_{turn_number}",
         )
@@ -297,6 +299,8 @@ async def _persist_turn_eval(
     signals: dict | None,
     elapsed_ms: int,
     flags: list[str],
+    question_text: str = "",
+    answer_text: str = "",
 ) -> None:
     """Background: write eval results to Postgres InterviewTurn row."""
     try:
@@ -306,6 +310,8 @@ async def _persist_turn_eval(
             turn_number=turn_number,
             eval_scores=eval_scores,
             signals=signals,
+            question_text=question_text,
+            answer_text=answer_text,
         )
         log.debug("db.eval_persisted", session_id=session_id, turn=turn_number)
     except Exception as exc:

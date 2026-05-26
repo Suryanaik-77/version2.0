@@ -202,13 +202,14 @@ async def update_turn_eval(
     cost_usd: float | None = None,
     tokens_in: int | None = None,
     tokens_out: int | None = None,
+    question_text: str = "",
+    answer_text: str = "",
 ) -> None:
     """
-    Merge eval scores, signals, and latency into an existing turn row.
-    Called from eval_engine after scoring completes.
-    Safe if the turn row doesn't exist yet — will retry once after 200ms.
+    Merge eval scores, signals, and latency into a turn row.
+    Creates the row if it doesn't exist (eval may finish before pipeline persist).
     """
-    async def _write() -> bool:
+    async def _write(create_if_missing: bool = False) -> bool:
         try:
             async with db_session() as db:
                 row = await db.scalar(
@@ -218,7 +219,20 @@ async def update_turn_eval(
                     )
                 )
                 if not row:
-                    return False
+                    if not create_if_missing:
+                        return False
+                    row = InterviewTurn(
+                        id=str(uuid.uuid4()),
+                        session_id=session_id,
+                        turn_number=turn_number,
+                        question_text=question_text or "",
+                        answer_text=answer_text or "",
+                        domain="",
+                        mode_at_start="",
+                        mode_at_end="",
+                        created_at=datetime.utcnow(),
+                    )
+                    db.add(row)
 
                 row.eval_scores = eval_scores
                 row.avg_eval_score = (
@@ -237,6 +251,11 @@ async def update_turn_eval(
                 row.cost_usd = cost_usd
                 row.tokens_in = tokens_in
                 row.tokens_out = tokens_out
+                # Backfill Q&A if row existed but was empty
+                if question_text and not row.question_text:
+                    row.question_text = question_text
+                if answer_text and not row.answer_text:
+                    row.answer_text = answer_text
                 return True
         except Exception as exc:
             log.error("db.update_turn_eval_failed",
@@ -245,9 +264,12 @@ async def update_turn_eval(
 
     success = await _write()
     if not success:
-        # Turn row may not exist yet (eval beat the turn write) — wait and retry once
-        await asyncio.sleep(0.2)
-        await _write()
+        # Turn row may not exist yet (eval beat the turn write) — wait and retry
+        await asyncio.sleep(0.5)
+        success = await _write()
+        if not success:
+            # Still missing — create it ourselves
+            await _write(create_if_missing=True)
 
 
 async def update_session_aggregate_scores(session_id: str) -> None:
