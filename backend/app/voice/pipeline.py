@@ -163,10 +163,16 @@ async def run_turn_pipeline(
                 name=f"db_turn_{session_id}_{turn_number}",
             )
 
-        # Notify client: turn complete
+        # Notify client: turn complete (with latency breakdown)
         await ws_hub.publish_to_session(
             session_id,
-            turn_complete_event(session_id, turn_number, elapsed_ms).to_json(),
+            turn_complete_event(
+                session_id, turn_number, elapsed_ms,
+                stt_ms=tracker.elapsed_ms("stt_complete"),
+                first_token_ms=tracker.elapsed_ms("first_token"),
+                first_audio_ms=tracker.elapsed_ms("first_audio_sent"),
+                tts_chunks=tracker.tts_chunk_count,
+            ).to_json(),
         )
 
         # Reset streaming STT for next turn (fresh Deepgram connection)

@@ -93,11 +93,29 @@ def turn_start_event(session_id: str, turn_number: int) -> WSEvent:
     )
 
 
-def turn_complete_event(session_id: str, turn_number: int, latency_ms: int) -> WSEvent:
+def turn_complete_event(
+    session_id: str,
+    turn_number: int,
+    latency_ms: int,
+    *,
+    stt_ms: int | None = None,
+    first_token_ms: int | None = None,
+    first_audio_ms: int | None = None,
+    tts_chunks: int = 0,
+) -> WSEvent:
+    payload: dict = {"turn_number": turn_number, "latency_ms": latency_ms}
+    if stt_ms is not None:
+        payload["stt_ms"] = stt_ms
+    if first_token_ms is not None:
+        payload["first_token_ms"] = first_token_ms
+    if first_audio_ms is not None:
+        payload["first_audio_ms"] = first_audio_ms
+    if tts_chunks:
+        payload["tts_chunks"] = tts_chunks
     return WSEvent(
         type=WSEventType.TURN_COMPLETE,
         session_id=session_id,
-        payload={"turn_number": turn_number, "latency_ms": latency_ms},
+        payload=payload,
     )
 
 

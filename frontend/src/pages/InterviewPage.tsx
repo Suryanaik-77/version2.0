@@ -823,18 +823,29 @@ export default function InterviewPage() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {turns.map(t => (
                   <div key={t.turnNumber} style={{
-                    display: 'flex', alignItems: 'center', gap: 10,
                     padding: '8px 12px', background: 'var(--bg-1)',
                     borderRadius: 'var(--r-md)',
                   }}>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-4)', width: 20 }}>
-                      {String(t.turnNumber).padStart(2,'0')}
-                    </span>
-                    <ModeTag mode={t.mode} />
-                    {t.avgScore != null && (
-                      <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-3)' }}>
-                        {Number(t.avgScore).toFixed(1)}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-4)', width: 20 }}>
+                        {String(t.turnNumber).padStart(2,'0')}
                       </span>
+                      <ModeTag mode={t.mode} />
+                      {t.avgScore != null && (
+                        <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-3)' }}>
+                          {Number(t.avgScore).toFixed(1)}
+                        </span>
+                      )}
+                    </div>
+                    {t.latency?.total_ms != null && (
+                      <div style={{
+                        display: 'flex', gap: 8, marginTop: 6, paddingLeft: 30,
+                        fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-4)',
+                      }}>
+                        {t.latency.first_token_ms != null && <span>tok {t.latency.first_token_ms}ms</span>}
+                        {t.latency.first_audio_ms != null && <span>aud {t.latency.first_audio_ms}ms</span>}
+                        <span style={{ marginLeft: 'auto' }}>{t.latency.total_ms}ms</span>
+                      </div>
                     )}
                   </div>
                 ))}

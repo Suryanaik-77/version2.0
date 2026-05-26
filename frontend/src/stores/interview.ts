@@ -26,6 +26,14 @@ export type InterviewMode =
   | 'PROBING' | 'DEEPENING' | 'ESCALATING'
   | 'PRESSURE' | 'RECOVERING' | 'TRANSITIONING'
 
+export interface TurnLatency {
+  stt_ms?:         number
+  first_token_ms?: number
+  first_audio_ms?: number
+  total_ms?:       number
+  tts_chunks?:     number
+}
+
 export interface TurnRecord {
   turnNumber:  number
   question:    string
@@ -33,6 +41,7 @@ export interface TurnRecord {
   mode:        InterviewMode
   evalScores?: Record<string, number>
   avgScore?:   number
+  latency?:    TurnLatency
 }
 
 interface InterviewState {
@@ -587,6 +596,13 @@ function handleMessage(msg: Record<string, unknown>) {
         question:   store.currentQuestion,
         answer:     store.transcript,
         mode:       store.mode,
+        latency: {
+          stt_ms:         p.stt_ms,
+          first_token_ms: p.first_token_ms,
+          first_audio_ms: p.first_audio_ms,
+          total_ms:       p.latency_ms,
+          tts_chunks:     p.tts_chunks,
+        },
       })
       useInterview.setState({ currentQuestion: '', audioState: 'silence' })
       break
