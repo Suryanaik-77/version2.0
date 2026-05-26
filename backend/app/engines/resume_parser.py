@@ -251,12 +251,15 @@ def _extract_pdf(file_bytes: bytes) -> str:
     for name, fn in extractors:
         try:
             text = fn(file_bytes)
-            if text and len(text.strip()) > 20:
-                log.info("resume.pdf_extracted", method=name, chars=len(text))
+            chars = len(text.strip()) if text else 0
+            log.info("resume.pdf_extractor_result", method=name, chars=chars,
+                     preview=text[:80].strip() if text else "(empty)")
+            if chars > 20:
+                log.info("resume.pdf_extracted", method=name, chars=chars)
                 return text
         except Exception as e:
             log.warning("resume.pdf_extractor_failed", method=name, error=str(e))
-    log.warning("resume.pdf_all_extractors_failed")
+    log.warning("resume.pdf_all_extractors_failed", file_size=len(file_bytes))
     return ""
 
 
